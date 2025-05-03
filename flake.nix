@@ -25,19 +25,9 @@
         devShells.default = with pkgs;
           mkShell {
             buildInputs = [
-              pkg-config
               rust-bin.beta.latest.default
-              python312Packages.jupyter
-              python312Packages.ipympl
               evcxr
             ];
-
-            shellHook = ''
-              mkdir ${KernelsDir}
-              evcxr_jupyter --install > /dev/null 2>&1
-              mv "$HOME/.local/share/jupyter/kernels/rust" "${KernelsDir}/rust/"
-              export JUPYTER_PATH="$PWD/.jupyter"
-            '';
           };
       }
     );
