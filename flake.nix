@@ -1,42 +1,44 @@
 {
-  description = "Flake to load Rust with Jupyter.";
+  description = "A Rust flake which installs a Jupyter kernel.";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs = {
     self,
     nixpkgs,
-  }: let
-    system = "x86_64-linux";
-    pkgs = nixpkgs.legacyPackages.${system};
-  in {
-    nixpkgs.overlays = [
-      (
-        self: super: {
-          python312Packages = super.python312Packages.override {
-            overrides = pyself: pysuper: {
-              lmfit = pysuper.lmfit.overrideAttrs {doCheck = false;};
-            };
+    rust-overlay,
+    flake-utils,
+    ...
+  }:
+    flake-utils.lib.eachDefaultSystem (
+      system: let
+        overlays = [(import rust-overlay)];
+        pkgs = import nixpkgs {
+          inherit system overlays;
+        };
+        KernelsDir = ".jupyter/kernels";
+      in {
+        devShells.default = with pkgs;
+          mkShell {
+            buildInputs = [
+              pkg-config
+              rust-bin.beta.latest.default
+              python312Packages.jupyter
+              python312Packages.ipympl
+              evcxr
+            ];
+
+            shellHook = ''
+              mkdir ${KernelsDir}
+              evcxr_jupyter --install > /dev/null 2>&1
+              mv "$HOME/.local/share/jupyter/kernels/rust" "${KernelsDir}/rust/"
+              export JUPYTER_PATH="$PWD/.jupyter"
+            '';
           };
-        }
-      )
-    ];
-
-    devShells.${system}.default = pkgs.mkShell {
-      nativeBuildInputs = with pkgs; [
-        python312Packages.jupyter
-        python312Packages.ipympl
-
-        evcxr
-
-        typst
-        typstfmt
-        typstyle
-      ];
-    };
-
-    doCheck = false;
-  };
+      }
+    );
 }
