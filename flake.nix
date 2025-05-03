@@ -8,7 +8,6 @@
   };
 
   outputs = {
-    self,
     nixpkgs,
     rust-overlay,
     flake-utils,
@@ -20,13 +19,15 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        KernelsDir = ".jupyter/kernels";
       in {
         devShells.default = with pkgs;
           mkShell {
             buildInputs = [
-              rust-bin.beta.latest.default
+              (rust-bin.stable.latest.default.override {
+                extensions = ["rust-src"];
+              })
               evcxr
+              bacon
             ];
           };
       }
