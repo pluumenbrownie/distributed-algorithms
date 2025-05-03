@@ -1,3 +1,5 @@
 .direnv
-.ipynb_checkpoints
-.jupyter
+
+# Added by cargo
+
+/target
