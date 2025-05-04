@@ -3,10 +3,11 @@ use ratatui::layout::Rect;
 use ratatui::prelude::Stylize;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
+use serde::{Deserialize, Serialize};
 
 use super::Location;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub(crate) struct Node {
     pub(crate) name: String,
     pub(crate) id: usize,

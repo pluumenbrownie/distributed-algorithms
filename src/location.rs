@@ -1,6 +1,8 @@
 use std::cmp::Ordering;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Location {
     pub(crate) horizontal: u16,
     pub(crate) vertical: u16,
