@@ -1,53 +1,59 @@
-use std::io;
+use std::{cmp::Ordering, io};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
     layout::Rect,
-    style::{Style, Stylize},
+    style::Stylize,
     symbols::border,
     text::Line,
-    widgets::{Block, Widget},
+    widgets::{Block, Paragraph, Widget},
 };
 
+mod location;
+mod node;
+
 const NODE_HEIGHT: u16 = 3;
-const NODE_WIDTH: u16 = 5;
+const NODE_WIDTH: u16 = 6;
 const NODE_H_SPACING: u16 = 4;
 const NODE_V_SPACING: u16 = 2;
 
-#[derive(Debug, Default, Clone, Copy)]
-struct Location {
-    horizontal: u16,
-    vertical: u16,
-}
-
 #[derive(Debug, Default, Clone)]
-struct Node {
-    name: String,
-    id: usize,
-    connections: Vec<usize>,
-    location: Location,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct NodeGrid {
-    nodes: Vec<Node>,
+pub struct NodeGrid<'a> {
+    nodes: Vec<node::Node>,
+    block: Option<Block<'a>>,
 }
 
 #[derive(Debug, Default)]
-pub struct App {
+pub struct App<'a> {
     counter: u8,
     exit: bool,
-    grid: NodeGrid,
+    grid: NodeGrid<'a>,
+    show_grid: bool,
 }
 
 fn main() -> io::Result<()> {
+    println!("{}", Location::new(2, 1) > Location::new(1, 2));
+
     let mut terminal = ratatui::init();
     let grid = NodeGrid::new(vec![
         Location::new(0, 0),
         Location::new(1, 1),
         Location::new(2, 4),
+        Location::new(5, 0),
+        Location::new(6, 0),
+        Location::new(7, 0),
+        Location::new(8, 0),
+        Location::new(9, 0),
+        Location::new(10, 0),
+        Location::new(11, 0),
+        Location::new(12, 0),
+        Location::new(13, 0),
+        Location::new(14, 0),
+        Location::new(15, 0),
+        Location::new(16, 0),
+        Location::new(17, 0),
     ]);
     let mut app = App {
         grid,
@@ -58,7 +64,7 @@ fn main() -> io::Result<()> {
     app_result
 }
 
-impl App {
+impl App<'_> {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
@@ -93,7 +99,7 @@ impl App {
     }
 }
 
-impl Widget for &App {
+impl Widget for &App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let title = Line::from(" Node View ".bold());
         let instructions = Line::from(vec![
@@ -114,39 +120,20 @@ impl Widget for &App {
     }
 }
 
-impl Location {
-    fn new(horizontal: u16, vertical: u16) -> Self {
-        Location {
-            horizontal,
-            vertical,
-        }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Location {
+    horizontal: u16,
+    vertical: u16,
+}
+
+impl<'a> NodeGrid<'a> {
+    pub fn block(mut self, block: Block<'a>) -> Self {
+        self.block = Some(block);
+        self
     }
 }
 
-impl NodeGrid {
-    fn new(nodes: Vec<Location>) -> Self {
-        let mut grid = NodeGrid::default();
-
-        for (id, location) in nodes.into_iter().enumerate() {
-            grid.nodes.push(Node {
-                name: "Yo".to_string(),
-                id,
-                connections: vec![],
-                location,
-            });
-        }
-
-        grid
-    }
-    fn place(&self, node: &Node) -> (u16, u16) {
-        (
-            NODE_H_SPACING + node.location.horizontal * (NODE_H_SPACING + NODE_WIDTH),
-            NODE_V_SPACING + node.location.vertical * (NODE_V_SPACING + NODE_HEIGHT),
-        )
-    }
-}
-
-impl Widget for NodeGrid {
+impl Widget for NodeGrid<'_> {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
@@ -155,23 +142,6 @@ impl Widget for NodeGrid {
             let (x, y) = self.place(node);
             let area = Rect::new(x, y, NODE_WIDTH, NODE_HEIGHT);
             node.clone().render(area, buf);
-        }
-    }
-}
-
-impl Widget for Node {
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        let shape = vec!["███", "█████", "███"];
-        for (line_nr, characters) in shape.into_iter().enumerate() {
-            buf.set_string(
-                area.left() + 2,
-                area.top() + 2 + line_nr as u16,
-                characters,
-                Style::default().fg(ratatui::style::Color::Green),
-            );
         }
     }
 }
@@ -205,6 +175,33 @@ mod tests {
 
     //     assert_eq!(buf, expected);
     // }
+
+    #[test]
+    fn location_compares() -> io::Result<()> {
+        assert!(Location::new(2, 2) < Location::new(3, 3));
+        assert!(
+            Location::new(2, 2)
+                .partial_cmp(&Location::new(3, 3))
+                .is_some_and(|x| x.is_lt())
+        );
+        assert!(Location::new(2, 2) < Location::new(2, 3));
+        assert!(Location::new(2, 2) < Location::new(3, 2));
+        assert!(Location::new(2, 2) == Location::new(2, 2));
+        assert!(Location::new(2, 2) > Location::new(2, 1));
+        assert!(Location::new(2, 2) > Location::new(1, 2));
+        assert!(
+            Location::new(0, 3)
+                .partial_cmp(&Location::new(1, 2))
+                .is_none()
+        );
+        assert!(
+            Location::new(1, 2)
+                .partial_cmp(&Location::new(0, 3))
+                .is_none()
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn handle_key_event() -> io::Result<()> {
