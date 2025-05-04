@@ -1,18 +1,10 @@
-use super::NODE_HEIGHT;
-
-use super::NODE_V_SPACING;
-
-use super::NODE_WIDTH;
-
-use super::NODE_H_SPACING;
-
-use crate::node::Node;
-
-use super::NodeGrid;
-
 use std::cmp::Ordering;
 
-use super::Location;
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Location {
+    pub(crate) horizontal: u16,
+    pub(crate) vertical: u16,
+}
 
 impl Location {
     pub fn new(horizontal: u16, vertical: u16) -> Self {
@@ -36,28 +28,5 @@ impl PartialOrd for Location {
             },
             Ordering::Equal => Some(self.vertical.cmp(&other.vertical)),
         }
-    }
-}
-
-impl NodeGrid<'_> {
-    pub(crate) fn new(nodes: Vec<Location>) -> Self {
-        let mut grid = NodeGrid::default();
-
-        for (id, location) in nodes.into_iter().enumerate() {
-            grid.nodes.push(Node {
-                name: "Yo".to_string(),
-                id,
-                connections: vec![],
-                location,
-            });
-        }
-
-        grid
-    }
-    pub(crate) fn place(&self, node: &Node) -> (u16, u16) {
-        (
-            NODE_H_SPACING + node.location.horizontal * (NODE_H_SPACING + NODE_WIDTH),
-            NODE_V_SPACING + node.location.vertical * (NODE_V_SPACING + NODE_HEIGHT),
-        )
     }
 }

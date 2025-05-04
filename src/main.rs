@@ -1,6 +1,8 @@
-use std::{cmp::Ordering, io};
+use std::io;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use location::Location;
+use node::Node;
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
@@ -20,8 +22,13 @@ const NODE_H_SPACING: u16 = 4;
 const NODE_V_SPACING: u16 = 2;
 
 #[derive(Debug, Default, Clone)]
-pub struct NodeGrid<'a> {
+pub struct NodeGrid {
     nodes: Vec<node::Node>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct NodeGridDisplay<'a> {
+    grid: NodeGrid,
     block: Option<Block<'a>>,
 }
 
@@ -29,7 +36,7 @@ pub struct NodeGrid<'a> {
 pub struct App<'a> {
     counter: u8,
     exit: bool,
-    grid: NodeGrid<'a>,
+    node_display: NodeGridDisplay<'a>,
     show_grid: bool,
 }
 
@@ -55,8 +62,9 @@ fn main() -> io::Result<()> {
         Location::new(16, 0),
         Location::new(17, 0),
     ]);
+    let node_display = NodeGridDisplay::new(grid);
     let mut app = App {
-        grid,
+        node_display,
         ..Default::default()
     };
     let app_result = app.run(&mut terminal);
@@ -116,24 +124,56 @@ impl Widget for &App<'_> {
             .border_set(border::THICK)
             .render(area, buf);
 
-        self.grid.clone().render(area, buf);
+        self.node_display.clone().render(area, buf);
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Location {
-    horizontal: u16,
-    vertical: u16,
+impl Widget for NodeGridDisplay<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        self.grid.render(area, buf);
+        self.block.render(area, buf);
+    }
 }
 
-impl<'a> NodeGrid<'a> {
+impl NodeGrid {
+    fn new(nodes: Vec<Location>) -> Self {
+        let mut grid = NodeGrid::default();
+
+        for (id, location) in nodes.into_iter().enumerate() {
+            grid.nodes.push(Node {
+                name: "Yo".to_string(),
+                id,
+                connections: vec![],
+                location,
+            });
+        }
+
+        grid
+    }
+    fn place(&self, node: &Node) -> (u16, u16) {
+        (
+            NODE_H_SPACING + node.location.horizontal * (NODE_H_SPACING + NODE_WIDTH),
+            NODE_V_SPACING + node.location.vertical * (NODE_V_SPACING + NODE_HEIGHT),
+        )
+    }
+}
+
+impl<'a> NodeGridDisplay<'a> {
+    pub fn new(grid: NodeGrid) -> Self {
+        Self { grid, block: None }
+    }
+
+    /// Surrounds the `NodeGrid` with a `Block`
     pub fn block(mut self, block: Block<'a>) -> Self {
         self.block = Some(block);
         self
     }
 }
 
-impl Widget for NodeGrid<'_> {
+impl Widget for NodeGrid {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
