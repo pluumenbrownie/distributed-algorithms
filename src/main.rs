@@ -1,19 +1,21 @@
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+// use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
-    layout::Rect,
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    layout::{Constraint, Flex, Layout, Rect},
     style::{Style, Stylize},
     symbols::border,
     text::Line,
-    widgets::{Block, Widget},
+    widgets::{Block, Clear, Widget},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::{self, Write},
 };
+use tui_textarea::TextArea;
 
 use location::Location;
 use node::Node;
@@ -42,6 +44,8 @@ pub struct App<'a> {
     exit: bool,
     node_display: NodeGridDisplay<'a>,
     show_grid: bool,
+    show_popup: bool,
+    textarea: TextArea<'a>,
 }
 
 fn main() -> Result<()> {
@@ -70,12 +74,35 @@ impl App<'_> {
 
     fn draw(&self, frame: &mut Frame) {
         frame.render_widget(self, frame.area());
+
+        if self.show_popup {
+            frame.render_widget(&self.textarea, popup_area(frame.area(), 60, 20));
+        }
     }
 
     fn handle_events(&mut self) -> Result<()> {
+        if self.show_popup {
+            self.handle_textarea()?;
+        } else {
+            match event::read()? {
+                Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                    self.handle_key_event(key_event)?
+                }
+                _ => {}
+            };
+        }
+        Ok(())
+    }
+
+    fn handle_textarea(&mut self) -> Result<(), anyhow::Error> {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)?
+                match key_event.code {
+                    KeyCode::Esc => self.popup(),
+                    _ => {
+                        self.textarea.input(key_event);
+                    }
+                }
             }
             _ => {}
         };
@@ -87,7 +114,7 @@ impl App<'_> {
             KeyCode::Char('q') => self.exit(),
             KeyCode::Char('s') => self.save_grid()?,
             KeyCode::Char('l') => self.load_grid()?,
-            KeyCode::Char('t') => self.type_something()?,
+            KeyCode::Char('t') => self.popup(),
             _ => {}
         }
         Ok(())
@@ -120,7 +147,12 @@ impl App<'_> {
         self.exit = true;
     }
 
-    fn type_something(&self) {}
+    // fn type_something(&self) {}
+    fn popup(&mut self) {
+        self.textarea.select_all();
+        self.textarea.delete_char();
+        self.show_popup = !self.show_popup;
+    }
 }
 
 impl Widget for &App<'_> {
@@ -143,7 +175,22 @@ impl Widget for &App<'_> {
             .border_set(border::THICK);
 
         self.node_display.clone().block(block).render(area, buf);
+
+        if self.show_popup {
+            let block = Block::bordered().title("Popup");
+            let area = popup_area(area, 60, 20);
+            Clear.render(area, buf);
+            block.render(area, buf);
+        }
     }
+}
+
+fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
+    let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
+    let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
+    let [area] = vertical.areas(area);
+    let [area] = horizontal.areas(area);
+    area
 }
 
 impl NodeGrid {
