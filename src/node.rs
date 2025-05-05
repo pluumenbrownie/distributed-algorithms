@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use super::Location;
 
+#[derive(Debug, Default, Clone)]
+pub(crate) struct NodeWidget {
+    node: Node,
+    style: Style,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub(crate) struct Node {
     pub(crate) name: String,
@@ -15,14 +21,7 @@ pub(crate) struct Node {
     pub(crate) location: Location,
 }
 
-impl Node {
-    pub(crate) fn display_id(&self, width: u16) -> String {
-        let mut output = String::new();
-        output.push_str(format!("{}", self.id).as_str());
-        pad(width, &mut output);
-        output
-    }
-}
+impl Node {}
 
 pub(crate) fn pad(width: u16, output: &mut String) {
     loop {
@@ -37,31 +36,38 @@ pub(crate) fn pad(width: u16, output: &mut String) {
     }
 }
 
-impl Widget for Node {
+impl NodeWidget {
+    pub fn from(node: &Node, style: Style) -> Self {
+        NodeWidget {
+            node: node.clone(),
+            style,
+        }
+    }
+    pub(crate) fn display_id(&self, width: u16) -> String {
+        let mut output = format!("{}", self.node.id);
+        pad(width, &mut output);
+        output
+    }
+
+    pub(crate) fn display_name(&self, width: u16) -> String {
+        let mut output = self.node.name.clone();
+        pad(width, &mut output);
+        output
+    }
+}
+
+impl Widget for NodeWidget {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
     {
-        buf.set_string(
-            area.left(),
-            area.top(),
-            "████",
-            Style::default().fg(ratatui::style::Color::Green),
-        );
+        buf.set_string(area.left(), area.top(), "████", self.style);
         buf.set_string(
             area.left(),
             area.top() + 1,
-            self.display_id(area.width),
-            Style::default()
-                .bg(ratatui::style::Color::Green)
-                .fg(ratatui::style::Color::Black)
-                .bold(),
+            self.display_name(area.width),
+            self.style.reversed().bold(),
         );
-        buf.set_string(
-            area.left(),
-            area.top() + 2,
-            "████",
-            Style::default().fg(ratatui::style::Color::Green),
-        );
+        buf.set_string(area.left(), area.top() + 2, "████", self.style);
     }
 }

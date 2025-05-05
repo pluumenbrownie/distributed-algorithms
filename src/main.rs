@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-// use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
@@ -10,19 +9,18 @@ use ratatui::{
     text::Line,
     widgets::{Block, Clear, Widget},
 };
-use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 use tui_textarea::TextArea;
 
 use location::Location;
-use node::Node;
 
 mod location;
 mod node;
+mod nodegrid;
 
 const NODE_HEIGHT: u16 = 3;
 const NODE_WIDTH: u16 = 6;
@@ -30,16 +28,24 @@ const NODE_H_SPACING: u16 = 4;
 const NODE_V_SPACING: u16 = 2;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum PopupState {
+enum AppState {
     #[default]
-    Off,
+    Default,
+    Selection,
+    Popup(PopupState),
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum PopupState {
     Save,
     Load,
+    New,
+    #[default]
     Small,
     Large,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum PopupSize {
     #[default]
     Small = 3,
@@ -51,9 +57,9 @@ impl PopupState {
         match self {
             Self::Save => PopupSize::Small,
             Self::Load => PopupSize::Small,
+            Self::New => PopupSize::Small,
             Self::Small => PopupSize::Small,
             Self::Large => PopupSize::Large,
-            _ => panic!("Got property of illegal state."),
         }
     }
 
@@ -61,9 +67,9 @@ impl PopupState {
         match self {
             Self::Save => Line::from(" Save structure to... ").left_aligned(),
             Self::Load => Line::from(" Load structure ... ").left_aligned(),
+            Self::New => Line::from(" Unique node name ").left_aligned(),
             Self::Small => Line::from(" Small Popup ").left_aligned(),
             Self::Large => Line::from(" Large Popup ").left_aligned(),
-            _ => panic!("Got property of illegal state."),
         }
     }
 
@@ -71,9 +77,9 @@ impl PopupState {
         match self {
             Self::Save => Line::from(" <Esc> Cancel - <Enter> Save ").right_aligned(),
             Self::Load => Line::from(" <Esc> Cancel - <Enter> Load ").right_aligned(),
+            Self::New => Line::from(" <Esc> Cancel - <Enter> Create ").right_aligned(),
             Self::Small => Line::from(" Close with <Esc> ").right_aligned(),
             Self::Large => Line::from(" Close with <Esc> ").right_aligned(),
-            _ => panic!("Got property of illegal state."),
         }
     }
 
@@ -89,30 +95,19 @@ impl PopupState {
                 full_file.push(latest_file);
                 full_file.display().to_string()
             }
+            Self::New => String::from(""),
             Self::Small => String::from(""),
             Self::Large => String::from(""),
-            _ => panic!("Got property of illegal state."),
         }
     }
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct NodeGrid {
-    nodes: Vec<node::Node>,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct NodeGridDisplay<'a> {
-    grid: NodeGrid,
-    block: Option<Block<'a>>,
 }
 
 #[derive(Debug, Default)]
 pub struct App<'a> {
     exit: bool,
-    node_display: NodeGridDisplay<'a>,
+    node_display: nodegrid::NodeGridDisplay<'a>,
     // show_grid: bool,
-    show_popup: PopupState,
+    state: AppState,
     textarea: TextArea<'a>,
     latest_dir: PathBuf,
     latest_file: String,
@@ -120,8 +115,8 @@ pub struct App<'a> {
 
 fn main() -> Result<()> {
     let mut terminal = ratatui::init();
-    let grid = NodeGrid::default();
-    let node_display = NodeGridDisplay::new(grid.clone());
+    let grid = nodegrid::NodeGrid::default();
+    let node_display = nodegrid::NodeGridDisplay::new(grid.clone());
     let mut app = App {
         node_display,
         latest_dir: env::current_dir()?,
@@ -149,29 +144,75 @@ impl App<'_> {
     }
 
     fn handle_events(&mut self) -> Result<()> {
-        match self.show_popup {
-            PopupState::Off => {
+        match self.state {
+            AppState::Default => {
                 match event::read()? {
                     Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                        self.handle_key_event(key_event)?
+                        self.handle_default_key_event(key_event)?
                     }
                     _ => {}
                 };
             }
-            PopupState::Save => self.save_textarea()?,
-            PopupState::Load => self.load_textarea()?,
-            _ => {
-                self.handle_textarea()?;
+            AppState::Selection => {
+                match event::read()? {
+                    Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                        self.handle_selection_key_event(key_event)?
+                    }
+                    _ => {}
+                };
             }
+            AppState::Popup(popup) => match popup {
+                PopupState::Save => self.save_textarea()?,
+                PopupState::Load => self.load_textarea()?,
+                PopupState::New => self.new_textarea()?,
+                PopupState::Large => {
+                    self.handle_textarea_key_event()?;
+                }
+                PopupState::Small => {
+                    self.handle_textarea_key_event()?;
+                }
+            },
         }
         Ok(())
     }
 
-    fn handle_textarea(&mut self) -> Result<(), anyhow::Error> {
+    fn handle_default_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
+        match key_event.code {
+            KeyCode::Char('q') => self.exit(),
+            KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.open_popup(PopupState::Save);
+            }
+            KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.open_popup(PopupState::Load);
+            }
+            KeyCode::Char('t') => self.open_popup(PopupState::Small),
+            KeyCode::Char('y') => self.open_popup(PopupState::Large),
+            KeyCode::Char('n') => self.open_popup(PopupState::New),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_selection_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
+        match key_event.code {
+            KeyCode::Up => self.move_node(0, 1),
+            KeyCode::Down => self.move_node(0, -1),
+            KeyCode::Right => self.move_node(1, 0),
+            KeyCode::Left => self.move_node(-1, 0),
+            KeyCode::Enter => match self.commit_selection() {
+                Err(_) => {}
+                Ok(_) => self.state_default(),
+            },
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_textarea_key_event(&mut self) -> Result<()> {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 match key_event.code {
-                    KeyCode::Esc => self.close_popup(),
+                    KeyCode::Esc => self.state_default(),
                     _ => {
                         self.textarea.input(key_event);
                     }
@@ -186,13 +227,12 @@ impl App<'_> {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 match key_event.code {
-                    KeyCode::Esc => self.close_popup(),
+                    KeyCode::Esc => self.state_default(),
                     KeyCode::Enter => {
-                        let mut path: PathBuf = self.textarea.lines()[0].parse()?;
+                        let path: PathBuf = self.textarea.lines()[0].parse()?;
                         self.save_grid(&path)?;
-                        self.latest_file = path.pop().to_string();
-                        self.latest_dir = path;
-                        self.close_popup();
+                        self.set_latest_location(path);
+                        self.state_default();
                     }
                     _ => {
                         self.textarea.input(key_event);
@@ -208,18 +248,12 @@ impl App<'_> {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 match key_event.code {
-                    KeyCode::Esc => self.close_popup(),
+                    KeyCode::Esc => self.state_default(),
                     KeyCode::Enter => {
-                        let mut path: PathBuf = self.textarea.lines()[0].parse()?;
+                        let path: PathBuf = self.textarea.lines()[0].parse()?;
                         self.load_grid(&path)?;
-                        self.latest_file = path
-                            .file_name()
-                            .expect("I mean I didn't WANT to unwrap here...")
-                            .to_string_lossy()
-                            .to_string();
-                        path.pop();
-                        self.latest_dir = path;
-                        self.close_popup();
+                        self.set_latest_location(path);
+                        self.state_default();
                     }
                     _ => {
                         self.textarea.input(key_event);
@@ -231,19 +265,35 @@ impl App<'_> {
         Ok(())
     }
 
-    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
-        match key_event.code {
-            KeyCode::Char('q') => self.exit(),
-            KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.open_popup(PopupState::Save);
+    fn set_latest_location(&mut self, mut path: PathBuf) {
+        self.latest_file = path
+            .file_name()
+            .expect("I mean I didn't WANT to unwrap here...")
+            .to_string_lossy()
+            .to_string();
+        path.pop();
+        self.latest_dir = path;
+    }
+
+    fn new_textarea(&mut self) -> Result<()> {
+        match event::read()? {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                match key_event.code {
+                    KeyCode::Esc => self.state_default(),
+                    KeyCode::Enter => {
+                        let name = self.textarea.lines()[0].clone();
+                        if let Ok(_) = self.add_node(name) {
+                            self.state_default();
+                            self.state = AppState::Selection;
+                        }
+                    }
+                    _ => {
+                        self.textarea.input(key_event);
+                    }
+                }
             }
-            KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.open_popup(PopupState::Load);
-            }
-            KeyCode::Char('t') => self.open_popup(PopupState::Small),
-            KeyCode::Char('y') => self.open_popup(PopupState::Large),
             _ => {}
-        }
+        };
         Ok(())
     }
 
@@ -272,9 +322,6 @@ impl App<'_> {
     }
 
     fn open_popup(&mut self, state: PopupState) {
-        if state == PopupState::Off {
-            panic!("")
-        }
         self.textarea = TextArea::new(vec![
             state.content_default(&self.latest_dir, &self.latest_file),
         ]);
@@ -287,11 +334,23 @@ impl App<'_> {
         // Move cursor to the end of the text
         self.textarea
             .input(KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL));
-        self.show_popup = state;
+        self.state = AppState::Popup(state);
     }
 
-    fn close_popup(&mut self) {
-        self.show_popup = PopupState::Off;
+    fn state_default(&mut self) {
+        self.state = AppState::Default;
+    }
+
+    fn add_node(&mut self, name: String) -> Result<()> {
+        self.node_display.grid.new_node(name)
+    }
+
+    fn move_node(&mut self, x: i8, y: i8) {
+        self.node_display.grid.move_node(x, y)
+    }
+
+    fn commit_selection(&mut self) -> Result<()> {
+        self.node_display.grid.commit()
     }
 }
 
@@ -299,6 +358,8 @@ impl Widget for &App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let title = Line::from(" Node View ".bold());
         let instructions = Line::from(vec![
+            " Current state: ".into(),
+            format!("{:?}", self.state).into(),
             " Save grid ".into(),
             "<S>".blue().bold(),
             " Load grid ".into(),
@@ -316,9 +377,10 @@ impl Widget for &App<'_> {
 
         self.node_display.clone().block(block).render(area, buf);
 
-        match self.show_popup {
-            PopupState::Off => (),
-            size => match size.size() {
+        match self.state {
+            AppState::Default => {}
+            AppState::Selection => {}
+            AppState::Popup(popup) => match popup.size() {
                 PopupSize::Small => {
                     let area = popup_area_small(area, 60, 3);
                     Clear.render(area, buf);
@@ -348,65 +410,6 @@ fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     let [area] = vertical.areas(area);
     let [area] = horizontal.areas(area);
     area
-}
-
-impl NodeGrid {
-    fn new(nodes: Vec<Location>) -> Self {
-        let mut grid = NodeGrid::default();
-
-        for (id, location) in nodes.into_iter().enumerate() {
-            grid.nodes.push(Node {
-                name: "Yo".to_string(),
-                id,
-                connections: vec![],
-                location,
-            });
-        }
-
-        grid
-    }
-
-    fn place(&self, node: &Node) -> (u16, u16) {
-        (
-            NODE_H_SPACING + node.location.horizontal * (NODE_H_SPACING + NODE_WIDTH),
-            NODE_V_SPACING + node.location.vertical * (NODE_V_SPACING + NODE_HEIGHT),
-        )
-    }
-}
-
-impl Widget for NodeGrid {
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        for node in self.nodes.iter() {
-            let (x, y) = self.place(node);
-            let area = Rect::new(x, y, NODE_WIDTH, NODE_HEIGHT);
-            node.clone().render(area, buf);
-        }
-    }
-}
-
-impl<'a> NodeGridDisplay<'a> {
-    pub fn new(grid: NodeGrid) -> Self {
-        Self { grid, block: None }
-    }
-
-    /// Surrounds the `NodeGrid` with a `Block`.
-    pub fn block(mut self, block: Block<'a>) -> Self {
-        self.block = Some(block);
-        self
-    }
-}
-
-impl Widget for NodeGridDisplay<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        self.grid.render(area, buf);
-        self.block.render(area, buf);
-    }
 }
 
 #[cfg(test)]
