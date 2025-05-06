@@ -45,6 +45,7 @@ enum PopupState {
     Pick,
     #[default]
     Small,
+    Edit,
     Large,
 }
 
@@ -63,6 +64,7 @@ impl PopupState {
             Self::New => PopupSize::Small,
             Self::Pick => PopupSize::Small,
             Self::Small => PopupSize::Small,
+            Self::Edit => PopupSize::Large,
             Self::Large => PopupSize::Large,
         }
     }
@@ -74,6 +76,7 @@ impl PopupState {
             Self::New => Line::from(" Unique node name ").left_aligned(),
             Self::Pick => Line::from(" Pick node with name ").left_aligned(),
             Self::Small => Line::from(" Small Popup ").left_aligned(),
+            Self::Edit => Line::from(" Edit node ").left_aligned(),
             Self::Large => Line::from(" Large Popup ").left_aligned(),
         }
     }
@@ -85,25 +88,27 @@ impl PopupState {
             Self::New => Line::from(" <Esc> Cancel - <Enter> Create ").right_aligned(),
             Self::Pick => Line::from(" <Esc> Cancel - <Enter> Pick ").right_aligned(),
             Self::Small => Line::from(" Close with <Esc> ").right_aligned(),
+            Self::Edit => Line::from(" <Esc> Cancel - <Ctrl+s> Apply ").right_aligned(),
             Self::Large => Line::from(" Close with <Esc> ").right_aligned(),
         }
     }
 
-    fn content_default(self, latest_dir: &Path, latest_file: &String) -> String {
+    fn content_default(self, app: &App) -> String {
         match self {
             Self::Save => {
-                let mut full_file = latest_dir.to_path_buf();
-                full_file.push(latest_file);
+                let mut full_file = app.latest_dir.to_path_buf();
+                full_file.push(app.latest_file.clone());
                 full_file.display().to_string()
             }
             Self::Load => {
-                let mut full_file = latest_dir.to_path_buf();
-                full_file.push(latest_file);
+                let mut full_file = app.latest_dir.to_path_buf();
+                full_file.push(app.latest_file.clone());
                 full_file.display().to_string()
             }
             Self::New => String::from(""),
             Self::Pick => String::from(""),
             Self::Small => String::from(""),
+            Self::Edit => app.get_node_serialized(),
             Self::Large => String::from(""),
         }
     }
@@ -173,6 +178,7 @@ impl App<'_> {
                 PopupState::Load => self.load_textarea()?,
                 PopupState::New => self.new_textarea()?,
                 PopupState::Pick => self.pick_textarea()?,
+                PopupState::Edit => self.edit_textarea()?,
                 PopupState::Large => {
                     self.handle_textarea_key_event()?;
                 }
@@ -210,6 +216,13 @@ impl App<'_> {
             // and right is positive
             KeyCode::Right => self.move_node(1, 0),
             KeyCode::Left => self.move_node(-1, 0),
+            KeyCode::Char('e') => {
+                self.open_popup(PopupState::Edit);
+            }
+            KeyCode::Backspace | KeyCode::Delete => {
+                self.delete_selection();
+                self.state_default()
+            }
             KeyCode::Enter => match self.commit_selection() {
                 Err(_) => {}
                 Ok(_) => self.state_default(),
@@ -245,6 +258,18 @@ impl App<'_> {
         self.confirm_cancel_textarea(&mut enter_func)
     }
 
+    fn save_grid(&self, path: &PathBuf) -> Result<()> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)?;
+        let mut writer = io::BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, &self.node_display.grid)?;
+        writer.flush()?;
+        Ok(())
+    }
+
     fn load_textarea(&mut self) -> Result<()> {
         let mut enter_func = |app: &mut App| {
             let path: PathBuf = app.textarea.lines()[0].parse()?;
@@ -256,24 +281,11 @@ impl App<'_> {
         self.confirm_cancel_textarea(&mut enter_func)
     }
 
-    /// Function for text areas which only need to run a function if Enter is pressed,
-    /// or to close when Esc is pressed. Else, just type in the text area.
-    fn confirm_cancel_textarea<F>(&mut self, mut enter_func: F) -> Result<()>
-    where
-        F: FnMut(&mut Self) -> Result<()>,
-    {
-        match event::read()? {
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                match key_event.code {
-                    KeyCode::Esc => self.state_default(),
-                    KeyCode::Enter => enter_func(self)?,
-                    _ => {
-                        self.textarea.input(key_event);
-                    }
-                }
-            }
-            _ => {}
-        };
+    fn load_grid(&mut self, path: &PathBuf) -> Result<()> {
+        let file = fs::OpenOptions::new().read(true).open(path)?;
+        let reader = io::BufReader::new(file);
+        self.node_display.grid = serde_json::from_reader(reader)?;
+
         Ok(())
     }
 
@@ -311,23 +323,45 @@ impl App<'_> {
         self.confirm_cancel_textarea(&mut enter_func)
     }
 
-    fn load_grid(&mut self, path: &PathBuf) -> Result<()> {
-        let file = fs::OpenOptions::new().read(true).open(path)?;
-        let reader = io::BufReader::new(file);
-        self.node_display.grid = serde_json::from_reader(reader)?;
-
+    /// Function for text areas which only need to run a function if Enter is pressed,
+    /// or to close when Esc is pressed. Else, just type in the text area.
+    fn confirm_cancel_textarea<F>(&mut self, mut enter_func: F) -> Result<()>
+    where
+        F: FnMut(&mut Self) -> Result<()>,
+    {
+        match event::read()? {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                match key_event.code {
+                    KeyCode::Esc => self.state_default(),
+                    KeyCode::Enter => enter_func(self)?,
+                    _ => {
+                        self.textarea.input(key_event);
+                    }
+                }
+            }
+            _ => {}
+        };
         Ok(())
     }
 
-    fn save_grid(&self, path: &PathBuf) -> Result<()> {
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(path)?;
-        let mut writer = io::BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, &self.node_display.grid)?;
-        writer.flush()?;
+    fn edit_textarea(&mut self) -> Result<()> {
+        match event::read()? {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                match key_event.code {
+                    KeyCode::Esc => self.state = AppState::Selection,
+                    KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let new_node = self.textarea.lines().concat();
+                        if self.overwrite_node(new_node).is_ok() {
+                            self.state = AppState::Selection;
+                        }
+                    }
+                    _ => {
+                        self.textarea.input(key_event);
+                    }
+                }
+            }
+            _ => {}
+        };
         Ok(())
     }
 
@@ -336,9 +370,7 @@ impl App<'_> {
     }
 
     fn open_popup(&mut self, state: PopupState) {
-        self.textarea = TextArea::new(vec![
-            state.content_default(&self.latest_dir, &self.latest_file),
-        ]);
+        self.textarea = TextArea::from(state.content_default(self).split('\n'));
         self.textarea.set_block(
             Block::bordered()
                 .title_top(state.title_top())
@@ -370,6 +402,18 @@ impl App<'_> {
     fn commit_selection(&mut self) -> Result<()> {
         self.node_display.grid.commit()
     }
+
+    fn delete_selection(&mut self) {
+        self.node_display.grid.delete()
+    }
+
+    fn overwrite_node(&mut self, new_node: String) -> Result<()> {
+        self.node_display.grid.overwrite(new_node)
+    }
+
+    fn get_node_serialized(&self) -> String {
+        self.node_display.grid.get_floating_serialized().unwrap()
+    }
 }
 
 impl Widget for &App<'_> {
@@ -379,14 +423,29 @@ impl Widget for &App<'_> {
             format!("{:?}", self.state).into(),
             " ".into(),
         ]);
-        let instructions = Line::from(vec![
-            " Save grid ".into(),
-            "<S>".blue().bold(),
-            " Load grid ".into(),
-            "<L>".blue().bold(),
-            " Quit ".into(),
-            "<Q> ".blue().bold(),
-        ]);
+        let instructions = match self.state {
+            AppState::Default => Line::from(vec![
+                " New node ".into(),
+                "<N>".blue().bold(),
+                " Pick node ".into(),
+                "<P>".blue().bold(),
+                " Save grid ".into(),
+                "<Ctrl+S>".blue().bold(),
+                " Load grid ".into(),
+                "<Ctrl+O>".blue().bold(),
+                " Quit ".into(),
+                "<Q> ".blue().bold(),
+            ]),
+            AppState::Selection => Line::from(vec![
+                " Move ".into(),
+                "<󰁍󰁅󰁝󰁔>".blue().bold(),
+                " Edit ".into(),
+                "<E>".blue().bold(),
+                " Place node ".into(),
+                "<Enter>".blue().bold(),
+            ]),
+            AppState::Popup(_) => Line::from(" Follow instructions in popup "),
+        };
 
         let block_style = Style::default();
         let block = Block::bordered()

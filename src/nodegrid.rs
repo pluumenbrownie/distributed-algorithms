@@ -19,6 +19,8 @@ use crate::{
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NodeGrid {
     pub(crate) nodes: Vec<Node>,
+
+    #[serde(skip)]
     pub(crate) floating_nodes: Vec<Node>,
 }
 
@@ -108,6 +110,24 @@ impl NodeGrid {
             None => return Err(anyhow!("Node with this name {:?} does not exist.", name)),
         }
         Ok(())
+    }
+
+    pub(crate) fn delete(&mut self) {
+        self.floating_nodes.clear();
+    }
+
+    pub(crate) fn overwrite(&mut self, new_node: String) -> Result<()> {
+        let new_node: Node = serde_json::from_str(&new_node)?;
+        self.floating_nodes[0] = new_node;
+        Ok(())
+    }
+
+    pub(crate) fn get_floating_serialized(&self) -> Result<String> {
+        match self.floating_nodes.len() {
+            1 => Ok(serde_json::to_string_pretty(&self.floating_nodes[0])?),
+            0 => Err(anyhow!("Tried to serialize with empty floating_nodes.")),
+            _ => Err(anyhow!("Tried to serialize multiple floating nodes.")),
+        }
     }
 }
 
