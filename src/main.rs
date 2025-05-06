@@ -1,6 +1,7 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
+use node::Connection;
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
@@ -43,6 +44,7 @@ enum PopupState {
     Load,
     New,
     Pick,
+    Connect,
     #[default]
     Small,
     Edit,
@@ -63,6 +65,7 @@ impl PopupState {
             Self::Load => PopupSize::Small,
             Self::New => PopupSize::Small,
             Self::Pick => PopupSize::Small,
+            Self::Connect => PopupSize::Small,
             Self::Small => PopupSize::Small,
             Self::Edit => PopupSize::Large,
             Self::Large => PopupSize::Large,
@@ -75,6 +78,7 @@ impl PopupState {
             Self::Load => Line::from(" Load structure... ").left_aligned(),
             Self::New => Line::from(" Unique node name ").left_aligned(),
             Self::Pick => Line::from(" Pick node with name ").left_aligned(),
+            Self::Connect => Line::from(" Create weighted connection ").left_aligned(),
             Self::Small => Line::from(" Small Popup ").left_aligned(),
             Self::Edit => Line::from(" Edit node ").left_aligned(),
             Self::Large => Line::from(" Large Popup ").left_aligned(),
@@ -87,6 +91,10 @@ impl PopupState {
             Self::Load => Line::from(" <Esc> Cancel - <Enter> Load ").right_aligned(),
             Self::New => Line::from(" <Esc> Cancel - <Enter> Create ").right_aligned(),
             Self::Pick => Line::from(" <Esc> Cancel - <Enter> Pick ").right_aligned(),
+            Self::Connect => {
+                Line::from(" <Esc> Cancel - <Enter> Create <Alt+Enter> Create undirected ")
+                    .right_aligned()
+            }
             Self::Small => Line::from(" Close with <Esc> ").right_aligned(),
             Self::Edit => Line::from(" <Esc> Cancel - <Ctrl+s> Apply ").right_aligned(),
             Self::Large => Line::from(" Close with <Esc> ").right_aligned(),
@@ -107,6 +115,7 @@ impl PopupState {
             }
             Self::New => String::from(""),
             Self::Pick => String::from(""),
+            Self::Connect => String::from("name 1.0"),
             Self::Small => String::from(""),
             Self::Edit => app.get_node_serialized(),
             Self::Large => String::from(""),
@@ -185,6 +194,7 @@ impl App<'_> {
                 PopupState::Small => {
                     self.handle_textarea_key_event()?;
                 }
+                PopupState::Connect => self.connect_textarea()?,
             },
         }
         Ok(())
@@ -216,8 +226,12 @@ impl App<'_> {
             // and right is positive
             KeyCode::Right => self.move_node(1, 0),
             KeyCode::Left => self.move_node(-1, 0),
+
             KeyCode::Char('e') => {
                 self.open_popup(PopupState::Edit);
+            }
+            KeyCode::Char('c') => {
+                self.open_popup(PopupState::Connect);
             }
             KeyCode::Backspace | KeyCode::Delete => {
                 self.delete_selection();
@@ -351,8 +365,40 @@ impl App<'_> {
                     KeyCode::Esc => self.state = AppState::Selection,
                     KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                         let new_node = self.textarea.lines().concat();
-                        if self.overwrite_node(new_node).is_ok() {
+                        if self.overwrite_selection(new_node).is_ok() {
                             self.state = AppState::Selection;
+                        }
+                    }
+                    _ => {
+                        self.textarea.input(key_event);
+                    }
+                }
+            }
+            _ => {}
+        };
+        Ok(())
+    }
+
+    fn connect_textarea(&mut self) -> Result<()> {
+        match event::read()? {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                match key_event.code {
+                    KeyCode::Esc => self.state = AppState::Selection,
+                    KeyCode::Enter => {
+                        let input = self.textarea.lines()[0].split_once(" ").ok_or(anyhow!(
+                            "Bad connection for connection: {:?}",
+                            self.textarea.lines()[0]
+                        ))?;
+                        let connection =
+                            Connection::new(input.0.to_string(), input.1.parse::<f64>()?);
+                        if self.connect_selection(&connection).is_ok() {
+                            if key_event.modifiers.contains(KeyModifiers::ALT) {
+                                if self.connect_other(&connection).is_ok() {
+                                    self.state = AppState::Selection;
+                                }
+                            } else {
+                                self.state = AppState::Selection;
+                            }
                         }
                     }
                     _ => {
@@ -407,12 +453,20 @@ impl App<'_> {
         self.node_display.grid.delete()
     }
 
-    fn overwrite_node(&mut self, new_node: String) -> Result<()> {
+    fn overwrite_selection(&mut self, new_node: String) -> Result<()> {
         self.node_display.grid.overwrite(new_node)
     }
 
     fn get_node_serialized(&self) -> String {
         self.node_display.grid.get_floating_serialized().unwrap()
+    }
+
+    fn connect_selection(&mut self, connection: &Connection) -> Result<()> {
+        self.node_display.grid.connect(connection)
+    }
+
+    fn connect_other(&mut self, connection: &Connection) -> Result<()> {
+        self.node_display.grid.connect_reverse(connection)
     }
 }
 
@@ -442,7 +496,7 @@ impl Widget for &App<'_> {
                 " Edit ".into(),
                 "<E>".blue().bold(),
                 " Place node ".into(),
-                "<Enter>".blue().bold(),
+                "<Enter> ".blue().bold(),
             ]),
             AppState::Popup(_) => Line::from(" Follow instructions in popup "),
         };

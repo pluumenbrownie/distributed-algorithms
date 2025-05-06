@@ -1,9 +1,7 @@
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::prelude::Stylize;
-use ratatui::style::Style;
-use ratatui::widgets::Widget;
+use anyhow::Result;
+use ratatui::{buffer::Buffer, layout::Rect, prelude::Stylize, style::Style, widgets::Widget};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::Location;
 
@@ -14,14 +12,39 @@ pub(crate) struct NodeWidget {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Connection {
+    pub other: String,
+    pub weight: f64,
+}
+
+impl Connection {
+    pub fn new(other: String, weight: f64) -> Self {
+        Self { other, weight }
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub(crate) struct Node {
     pub(crate) name: String,
     pub(crate) id: usize,
-    pub(crate) connections: Vec<usize>,
+    pub(crate) connections: Vec<Connection>,
     pub(crate) location: Location,
 }
 
-impl Node {}
+impl Node {
+    pub(crate) fn add_connection(&mut self, connection: &Connection) {
+        match self
+            .connections
+            .iter()
+            .position(|n| n.other == connection.other)
+        {
+            Some(index) => self.connections[index] = connection.clone(),
+            None => {
+                self.connections.push(connection.clone());
+            }
+        };
+    }
+}
 
 pub(crate) fn pad(width: u16, output: &mut String) {
     loop {

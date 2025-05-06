@@ -13,7 +13,7 @@ use super::{NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH};
 
 use crate::{
     location::Location,
-    node::{self, Node, NodeWidget},
+    node::{self, Connection, Node, NodeWidget},
 };
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -37,9 +37,7 @@ impl NodeGrid {
         for (id, location) in nodes.into_iter().enumerate() {
             grid.nodes.push(Node {
                 name: "Yo".to_string(),
-                id,
-                connections: vec![],
-                location,
+                ..Default::default()
             });
         }
 
@@ -92,9 +90,6 @@ impl NodeGrid {
             true => Err(anyhow!("Overlap in nodes")),
             false => {
                 self.nodes.append(&mut self.floating_nodes);
-                // for node in self.floating_nodes.drain(0..) {
-                //     self.nodes.push(node.clone());
-                // }
                 Ok(())
             }
         }
@@ -128,6 +123,38 @@ impl NodeGrid {
             0 => Err(anyhow!("Tried to serialize with empty floating_nodes.")),
             _ => Err(anyhow!("Tried to serialize multiple floating nodes.")),
         }
+    }
+
+    pub(crate) fn connect(&mut self, connection: &Connection) -> Result<()> {
+        match self.floating_nodes.len() {
+            0 => Err(anyhow!("Tried to connect with empty floating_nodes."))?,
+            _ => {
+                if !self.nodes.iter().any(|n| n.name == connection.other) {
+                    Err(anyhow!("Other `{:?}` does not exist.", connection.other))?
+                };
+                for node in self.floating_nodes.iter_mut() {
+                    node.add_connection(connection);
+                }
+            }
+        };
+
+        Ok(())
+    }
+
+    pub(crate) fn connect_reverse(&mut self, connection: &Connection) -> Result<()> {
+        match self.floating_nodes.len() {
+            0 => Err(anyhow!("Tried to connect with empty floating_nodes."))?,
+            _ => {
+                for node in self.floating_nodes.iter() {
+                    let other_connection = Connection::new(node.name.clone(), connection.weight);
+                    for node in self.nodes.iter_mut().filter(|n| n.name == connection.other) {
+                        node.add_connection(&other_connection);
+                    }
+                }
+            }
+        };
+
+        Ok(())
     }
 }
 
