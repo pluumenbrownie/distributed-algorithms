@@ -54,9 +54,9 @@ fn location_compares() -> io::Result<()> {
 }
 
 #[test]
-fn handle_key_event() -> io::Result<()> {
+fn handle_key_event() -> Result<()> {
     let mut app = App::default();
-    app.handle_default_key_event(KeyCode::Char('q').into());
+    app.handle_default_key_event(KeyCode::Char('q').into())?;
     assert!(app.exit);
 
     Ok(())

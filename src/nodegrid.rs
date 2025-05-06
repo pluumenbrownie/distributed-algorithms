@@ -1,6 +1,6 @@
 use std::cmp;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Ok, Result, anyhow};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -13,7 +13,7 @@ use super::{NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH};
 
 use crate::{
     location::Location,
-    node::{Node, NodeWidget},
+    node::{self, Node, NodeWidget},
 };
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -46,8 +46,8 @@ impl NodeGrid {
 
     pub(crate) fn place(&self, node: &Node) -> (u16, u16) {
         (
-            NODE_H_SPACING + node.location.horizontal * (NODE_H_SPACING + NODE_WIDTH),
-            NODE_V_SPACING + node.location.vertical * (NODE_V_SPACING + NODE_HEIGHT),
+            NODE_H_SPACING + node.location.x * (NODE_H_SPACING + NODE_WIDTH),
+            NODE_V_SPACING + node.location.y * (NODE_V_SPACING + NODE_HEIGHT),
         )
     }
 
@@ -68,14 +68,14 @@ impl NodeGrid {
     }
 
     fn next_id(&self) -> usize {
-        self.nodes.iter().max_by_key(|&n| n.id).unwrap().id + 1
+        self.nodes.iter().max_by_key(|&n| n.id).map_or(0, |n| n.id) + 1
     }
 
     pub(crate) fn move_node(&mut self, x: i8, y: i8) {
         for node in self.floating_nodes.iter_mut() {
             let mut location = node.location;
-            location.horizontal = cmp::max(location.horizontal as i32 - x as i32, 0) as u16;
-            location.vertical = cmp::max(location.vertical as i32 - y as i32, 0) as u16;
+            location.x = cmp::max(location.x as i32 + x as i32, 0) as u16;
+            location.y = cmp::max(location.y as i32 + y as i32, 0) as u16;
             node.location = location;
         }
     }
@@ -89,12 +89,25 @@ impl NodeGrid {
         match overlap {
             true => Err(anyhow!("Overlap in nodes")),
             false => {
-                for node in self.floating_nodes.drain(0..) {
-                    self.nodes.push(node.clone());
-                }
+                self.nodes.append(&mut self.floating_nodes);
+                // for node in self.floating_nodes.drain(0..) {
+                //     self.nodes.push(node.clone());
+                // }
                 Ok(())
             }
         }
+    }
+
+    pub(crate) fn pick(&mut self, name: String) -> Result<()> {
+        let matched_node_index = self.nodes.iter_mut().position(|n| n.name == name);
+        match matched_node_index {
+            Some(index) => {
+                let node = self.nodes.remove(index);
+                self.floating_nodes.push(node);
+            }
+            None => return Err(anyhow!("Node with this name {:?} does not exist.", name)),
+        }
+        Ok(())
     }
 }
 

@@ -1,3 +1,5 @@
+#![allow(unused_variables, unused_imports, dead_code)]
+
 use anyhow::{Context, Result};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -12,7 +14,7 @@ use ratatui::{
 use std::{
     env, fs,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use tui_textarea::TextArea;
 
@@ -40,6 +42,7 @@ enum PopupState {
     Save,
     Load,
     New,
+    Pick,
     #[default]
     Small,
     Large,
@@ -58,6 +61,7 @@ impl PopupState {
             Self::Save => PopupSize::Small,
             Self::Load => PopupSize::Small,
             Self::New => PopupSize::Small,
+            Self::Pick => PopupSize::Small,
             Self::Small => PopupSize::Small,
             Self::Large => PopupSize::Large,
         }
@@ -66,8 +70,9 @@ impl PopupState {
     fn title_top<'a>(self) -> Line<'a> {
         match self {
             Self::Save => Line::from(" Save structure to... ").left_aligned(),
-            Self::Load => Line::from(" Load structure ... ").left_aligned(),
+            Self::Load => Line::from(" Load structure... ").left_aligned(),
             Self::New => Line::from(" Unique node name ").left_aligned(),
+            Self::Pick => Line::from(" Pick node with name ").left_aligned(),
             Self::Small => Line::from(" Small Popup ").left_aligned(),
             Self::Large => Line::from(" Large Popup ").left_aligned(),
         }
@@ -78,24 +83,26 @@ impl PopupState {
             Self::Save => Line::from(" <Esc> Cancel - <Enter> Save ").right_aligned(),
             Self::Load => Line::from(" <Esc> Cancel - <Enter> Load ").right_aligned(),
             Self::New => Line::from(" <Esc> Cancel - <Enter> Create ").right_aligned(),
+            Self::Pick => Line::from(" <Esc> Cancel - <Enter> Pick ").right_aligned(),
             Self::Small => Line::from(" Close with <Esc> ").right_aligned(),
             Self::Large => Line::from(" Close with <Esc> ").right_aligned(),
         }
     }
 
-    fn content_default(self, latest_dir: &PathBuf, latest_file: &String) -> String {
+    fn content_default(self, latest_dir: &Path, latest_file: &String) -> String {
         match self {
             Self::Save => {
-                let mut full_file = latest_dir.clone();
+                let mut full_file = latest_dir.to_path_buf();
                 full_file.push(latest_file);
                 full_file.display().to_string()
             }
             Self::Load => {
-                let mut full_file = latest_dir.clone();
+                let mut full_file = latest_dir.to_path_buf();
                 full_file.push(latest_file);
                 full_file.display().to_string()
             }
             Self::New => String::from(""),
+            Self::Pick => String::from(""),
             Self::Small => String::from(""),
             Self::Large => String::from(""),
         }
@@ -165,6 +172,7 @@ impl App<'_> {
                 PopupState::Save => self.save_textarea()?,
                 PopupState::Load => self.load_textarea()?,
                 PopupState::New => self.new_textarea()?,
+                PopupState::Pick => self.pick_textarea()?,
                 PopupState::Large => {
                     self.handle_textarea_key_event()?;
                 }
@@ -185,6 +193,7 @@ impl App<'_> {
             KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.open_popup(PopupState::Load);
             }
+            KeyCode::Char('p') => self.open_popup(PopupState::Pick),
             KeyCode::Char('t') => self.open_popup(PopupState::Small),
             KeyCode::Char('y') => self.open_popup(PopupState::Large),
             KeyCode::Char('n') => self.open_popup(PopupState::New),
@@ -195,8 +204,10 @@ impl App<'_> {
 
     fn handle_selection_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
         match key_event.code {
-            KeyCode::Up => self.move_node(0, 1),
-            KeyCode::Down => self.move_node(0, -1),
+            // In ratatui, down is positive
+            KeyCode::Down => self.move_node(0, 1),
+            KeyCode::Up => self.move_node(0, -1),
+            // and right is positive
             KeyCode::Right => self.move_node(1, 0),
             KeyCode::Left => self.move_node(-1, 0),
             KeyCode::Enter => match self.commit_selection() {
@@ -224,37 +235,38 @@ impl App<'_> {
     }
 
     fn save_textarea(&mut self) -> Result<()> {
-        match event::read()? {
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                match key_event.code {
-                    KeyCode::Esc => self.state_default(),
-                    KeyCode::Enter => {
-                        let path: PathBuf = self.textarea.lines()[0].parse()?;
-                        self.save_grid(&path)?;
-                        self.set_latest_location(path);
-                        self.state_default();
-                    }
-                    _ => {
-                        self.textarea.input(key_event);
-                    }
-                }
-            }
-            _ => {}
+        let mut enter_func = |app: &mut App| {
+            let path: PathBuf = app.textarea.lines()[0].parse()?;
+            app.save_grid(&path)?;
+            app.set_latest_location(path);
+            app.state_default();
+            Ok(())
         };
-        Ok(())
+        self.confirm_cancel_textarea(&mut enter_func)
     }
 
     fn load_textarea(&mut self) -> Result<()> {
+        let mut enter_func = |app: &mut App| {
+            let path: PathBuf = app.textarea.lines()[0].parse()?;
+            app.load_grid(&path)?;
+            app.set_latest_location(path);
+            app.state_default();
+            Ok(())
+        };
+        self.confirm_cancel_textarea(&mut enter_func)
+    }
+
+    /// Function for text areas which only need to run a function if Enter is pressed,
+    /// or to close when Esc is pressed. Else, just type in the text area.
+    fn confirm_cancel_textarea<F>(&mut self, mut enter_func: F) -> Result<()>
+    where
+        F: FnMut(&mut Self) -> Result<()>,
+    {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 match key_event.code {
                     KeyCode::Esc => self.state_default(),
-                    KeyCode::Enter => {
-                        let path: PathBuf = self.textarea.lines()[0].parse()?;
-                        self.load_grid(&path)?;
-                        self.set_latest_location(path);
-                        self.state_default();
-                    }
+                    KeyCode::Enter => enter_func(self)?,
                     _ => {
                         self.textarea.input(key_event);
                     }
@@ -276,25 +288,27 @@ impl App<'_> {
     }
 
     fn new_textarea(&mut self) -> Result<()> {
-        match event::read()? {
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                match key_event.code {
-                    KeyCode::Esc => self.state_default(),
-                    KeyCode::Enter => {
-                        let name = self.textarea.lines()[0].clone();
-                        if let Ok(_) = self.add_node(name) {
-                            self.state_default();
-                            self.state = AppState::Selection;
-                        }
-                    }
-                    _ => {
-                        self.textarea.input(key_event);
-                    }
-                }
+        let mut enter_func = |app: &mut App| {
+            let name = app.textarea.lines()[0].clone();
+            if app.add_node(name).is_ok() {
+                app.state_default();
+                app.state = AppState::Selection;
             }
-            _ => {}
+            Ok(())
         };
-        Ok(())
+        self.confirm_cancel_textarea(&mut enter_func)
+    }
+
+    fn pick_textarea(&mut self) -> Result<()> {
+        let mut enter_func = |app: &mut App| {
+            let name = app.textarea.lines()[0].clone();
+            if app.pick_node(name).is_ok() {
+                app.state_default();
+                app.state = AppState::Selection;
+            }
+            Ok(())
+        };
+        self.confirm_cancel_textarea(&mut enter_func)
     }
 
     fn load_grid(&mut self, path: &PathBuf) -> Result<()> {
@@ -349,6 +363,10 @@ impl App<'_> {
         self.node_display.grid.move_node(x, y)
     }
 
+    fn pick_node(&mut self, name: String) -> Result<()> {
+        self.node_display.grid.pick(name)
+    }
+
     fn commit_selection(&mut self) -> Result<()> {
         self.node_display.grid.commit()
     }
@@ -356,10 +374,12 @@ impl App<'_> {
 
 impl Widget for &App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" Node View ".bold());
-        let instructions = Line::from(vec![
+        let title = Line::from(vec![
             " Current state: ".into(),
             format!("{:?}", self.state).into(),
+            " ".into(),
+        ]);
+        let instructions = Line::from(vec![
             " Save grid ".into(),
             "<S>".blue().bold(),
             " Load grid ".into(),
