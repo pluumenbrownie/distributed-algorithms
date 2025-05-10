@@ -11,6 +11,45 @@ pub(crate) struct NodeWidget {
     style: Style,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ConnectionWidget {
+    pub sprite: ConnectionSprite,
+    pub style: Style,
+}
+
+impl ConnectionWidget {
+    pub fn new(sprite: ConnectionSprite, style: Style) -> Self {
+        ConnectionWidget { sprite, style }
+    }
+
+    pub fn set_style(&mut self, style: Style) {
+        self.style = style;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ConnectionSprite {
+    Horizontal,
+    Vertical,
+    DiagULLR,
+    DiagLLUR,
+    Other(String),
+}
+
+impl ConnectionSprite {
+    pub fn get(self) -> Vec<String> {
+        match self {
+            ConnectionSprite::Horizontal => vec!["𜹜𜹜𜹜".into()],
+            ConnectionSprite::Vertical => {
+                vec!["┇".into(), "┇".into(), "┇".into()]
+            }
+            ConnectionSprite::DiagULLR => vec!["𜹙𜹠".into(), " 𜹒𜹍𜹠".into(), "   𜹒𜹴".into()],
+            ConnectionSprite::DiagLLUR => vec!["   𜹰𜹖".into(), " 𜹰𜹍𜹑".into(), "𜹨𜹑".into()],
+            ConnectionSprite::Other(string) => vec![format!("&{}", string)],
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Connection {
     pub other: String,
@@ -20,6 +59,23 @@ pub struct Connection {
 impl Connection {
     pub fn new(other: String, weight: f64) -> Self {
         Self { other, weight }
+    }
+
+    pub fn sprite(&self, start: &Location, end: &Location) -> ConnectionSprite {
+        let dx = end.x as i32 - start.x as i32;
+        let dy = end.y as i32 - start.y as i32;
+
+        if dx == -1 && dy == 1 {
+            ConnectionSprite::DiagLLUR
+        } else if dx == -1 && dy == -1 {
+            ConnectionSprite::DiagULLR
+        } else if dx.abs() == 1 && dy == 0 {
+            ConnectionSprite::Horizontal
+        } else if dx == 0 && dy.abs() == 1 {
+            ConnectionSprite::Vertical
+        } else {
+            ConnectionSprite::Other(self.other.clone())
+        }
     }
 }
 
@@ -92,5 +148,16 @@ impl Widget for NodeWidget {
             self.style.reversed().bold(),
         );
         buf.set_string(area.left(), area.top() + 2, "████", self.style);
+    }
+}
+
+impl Widget for ConnectionWidget {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        for (content, line) in self.sprite.get().into_iter().zip(0u16..) {
+            buf.set_string(area.left(), area.top() + line, content, self.style);
+        }
     }
 }

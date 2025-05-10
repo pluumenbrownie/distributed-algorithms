@@ -27,8 +27,8 @@ mod nodegrid;
 
 const NODE_HEIGHT: u16 = 3;
 const NODE_WIDTH: u16 = 6;
-const NODE_H_SPACING: u16 = 4;
-const NODE_V_SPACING: u16 = 2;
+const NODE_H_SPACING: u16 = 3;
+const NODE_V_SPACING: u16 = 3;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum AppState {

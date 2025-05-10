@@ -13,7 +13,7 @@ use super::{NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH};
 
 use crate::{
     location::Location,
-    node::{self, Connection, Node, NodeWidget},
+    node::{self, Connection, ConnectionSprite, ConnectionWidget, Node, NodeWidget},
 };
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -44,11 +44,15 @@ impl NodeGrid {
         grid
     }
 
-    pub(crate) fn place(&self, node: &Node) -> (u16, u16) {
+    fn place_location(&self, location: &Location) -> (u16, u16) {
         (
-            NODE_H_SPACING + node.location.x * (NODE_H_SPACING + NODE_WIDTH),
-            NODE_V_SPACING + node.location.y * (NODE_V_SPACING + NODE_HEIGHT),
+            NODE_H_SPACING + location.x * (NODE_H_SPACING + NODE_WIDTH),
+            NODE_V_SPACING + location.y * (NODE_V_SPACING + NODE_HEIGHT),
         )
+    }
+
+    pub(crate) fn place(&self, node: &Node) -> (u16, u16) {
+        self.place_location(&node.location)
     }
 
     pub(crate) fn new_node(&mut self, name: String) -> Result<()> {
@@ -163,6 +167,73 @@ impl Widget for NodeGrid {
     where
         Self: Sized,
     {
+        let mut longer_connections = vec![];
+        for node in self.nodes.iter() {
+            let style = Style::default().fg(ratatui::style::Color::White);
+            for (origin, connection) in self
+                .nodes
+                .iter()
+                .filter(|n| n.location > node.location)
+                .filter_map(|n| {
+                    let c = n.connections.iter().find(|c| c.other == node.name);
+                    c.map(|c| (n, c))
+                })
+            {
+                // if node.connections.iter().any(|c| c.other == other.name) {
+
+                // } else {
+
+                // }
+                let con_widget = ConnectionWidget::new(
+                    connection.sprite(&origin.location, &node.location),
+                    style,
+                );
+                let area = {
+                    let coords = self.place_location(&node.location.lowest(&origin.location));
+                    match con_widget.sprite {
+                        ConnectionSprite::Horizontal => Rect::new(
+                            coords.0 + NODE_WIDTH,
+                            coords.1 + NODE_HEIGHT / 2,
+                            NODE_H_SPACING,
+                            1,
+                        ),
+                        ConnectionSprite::Vertical => Rect::new(
+                            coords.0 + NODE_WIDTH / 2,
+                            coords.1 + NODE_HEIGHT,
+                            1,
+                            NODE_V_SPACING,
+                        ),
+                        ConnectionSprite::DiagLLUR => {
+                            Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
+                        }
+                        ConnectionSprite::DiagULLR => {
+                            Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
+                        }
+                        ConnectionSprite::Other(_) => {
+                            let coords = self.place(origin);
+                            Rect::new(coords.0 + NODE_WIDTH / 2 - 1, coords.1 + NODE_HEIGHT, 1, 1)
+                        }
+                    }
+                };
+                match con_widget.sprite {
+                    ConnectionSprite::Other(_) => longer_connections.push((area, con_widget)),
+                    _ => con_widget.render(area, buf),
+                }
+            }
+            // for connection in node.connections.iter() {
+            //     // if self.nodes.iter().any(|n| {
+            //     //     n.connections.iter().any(|c| c.other == node.name)
+            //     //         && node.name.cmp(&n.name).is_gt()
+            //     // }) {
+            //     //     continue;
+            //     // }
+
+            // }
+            // let node_widget = NodeWidget::from(node, style);
+            // let (x, y) = self.place(node);
+            // let area = Rect::new(x, y, NODE_WIDTH, NODE_HEIGHT);
+            // node_widget.render(area, buf);
+        }
         for node in self.nodes.iter() {
             let style = Style::default().fg(ratatui::style::Color::Green);
             let (x, y) = self.place(node);
@@ -176,6 +247,9 @@ impl Widget for NodeGrid {
             let node_widget = NodeWidget::from(node, style);
             let area = Rect::new(x, y, NODE_WIDTH, NODE_HEIGHT);
             node_widget.render(area, buf);
+        }
+        for (area, connection) in longer_connections {
+            connection.render(area, buf);
         }
     }
 }
