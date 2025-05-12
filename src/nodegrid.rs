@@ -173,51 +173,114 @@ impl Widget for NodeGrid {
             for (origin, connection) in self
                 .nodes
                 .iter()
-                .filter(|n| n.location > node.location)
+                // .filter(|n| n.location > node.location)
                 .filter_map(|n| {
                     let c = n.connections.iter().find(|c| c.other == node.name);
                     c.map(|c| (n, c))
                 })
             {
-                // if node.connections.iter().any(|c| c.other == other.name) {
-
-                // } else {
-
-                // }
-                let con_widget = ConnectionWidget::new(
-                    connection.sprite(&origin.location, &node.location),
-                    style,
-                );
-                let area = {
-                    let coords = self.place_location(&node.location.lowest(&origin.location));
+                if node.connections.iter().any(|c| c.other == origin.name) {
+                    let con_widget = ConnectionWidget::new(
+                        connection.undirected_sprite(&origin.location, &node.location),
+                        style,
+                    );
+                    let area = {
+                        let coords = self.place_location(&node.location.lowest(&origin.location));
+                        match con_widget.sprite {
+                            ConnectionSprite::UndirHorizontal => Rect::new(
+                                coords.0 + NODE_WIDTH,
+                                coords.1 + NODE_HEIGHT / 2,
+                                NODE_H_SPACING,
+                                1,
+                            ),
+                            ConnectionSprite::UndirVertical => Rect::new(
+                                coords.0 + NODE_WIDTH / 2,
+                                coords.1 + NODE_HEIGHT,
+                                1,
+                                NODE_V_SPACING,
+                            ),
+                            ConnectionSprite::UndirDiagLLUR => {
+                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
+                            }
+                            ConnectionSprite::UndirDiagULLR => {
+                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
+                            }
+                            ConnectionSprite::Other(_) => {
+                                let coords = self.place(origin);
+                                Rect::new(
+                                    coords.0 + NODE_WIDTH / 2 - 1,
+                                    coords.1 + NODE_HEIGHT,
+                                    1,
+                                    1,
+                                )
+                            }
+                            _ => panic!("Undirected sprite match received directed sprite."),
+                        }
+                    };
                     match con_widget.sprite {
-                        ConnectionSprite::Horizontal => Rect::new(
-                            coords.0 + NODE_WIDTH,
-                            coords.1 + NODE_HEIGHT / 2,
-                            NODE_H_SPACING,
-                            1,
-                        ),
-                        ConnectionSprite::Vertical => Rect::new(
-                            coords.0 + NODE_WIDTH / 2,
-                            coords.1 + NODE_HEIGHT,
-                            1,
-                            NODE_V_SPACING,
-                        ),
-                        ConnectionSprite::DiagLLUR => {
-                            Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
-                        }
-                        ConnectionSprite::DiagULLR => {
-                            Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
-                        }
-                        ConnectionSprite::Other(_) => {
-                            let coords = self.place(origin);
-                            Rect::new(coords.0 + NODE_WIDTH / 2 - 1, coords.1 + NODE_HEIGHT, 1, 1)
-                        }
+                        ConnectionSprite::Other(_) => longer_connections.push((area, con_widget)),
+                        _ => con_widget.render(area, buf),
                     }
-                };
-                match con_widget.sprite {
-                    ConnectionSprite::Other(_) => longer_connections.push((area, con_widget)),
-                    _ => con_widget.render(area, buf),
+                } else {
+                    let con_widget = ConnectionWidget::new(
+                        connection.directed_sprite(&origin.location, &node.location),
+                        style,
+                    );
+                    let area = {
+                        let coords = self.place_location(&node.location.lowest(&origin.location));
+                        match con_widget.sprite {
+                            ConnectionSprite::Left => Rect::new(
+                                coords.0 + NODE_WIDTH,
+                                coords.1 + NODE_HEIGHT / 2,
+                                NODE_H_SPACING,
+                                1,
+                            ),
+                            ConnectionSprite::Right => Rect::new(
+                                coords.0 + NODE_WIDTH,
+                                coords.1 + NODE_HEIGHT / 2,
+                                NODE_H_SPACING,
+                                1,
+                            ),
+                            ConnectionSprite::Upwards => Rect::new(
+                                coords.0 + NODE_WIDTH / 2,
+                                coords.1 + NODE_HEIGHT,
+                                1,
+                                NODE_V_SPACING,
+                            ),
+                            ConnectionSprite::Downwards => Rect::new(
+                                coords.0 + NODE_WIDTH / 2,
+                                coords.1 + NODE_HEIGHT,
+                                1,
+                                NODE_V_SPACING,
+                            ),
+                            ConnectionSprite::DiagLLUR => {
+                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
+                            }
+                            ConnectionSprite::DiagURLL => {
+                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
+                            }
+                            ConnectionSprite::DiagULLR => {
+                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
+                            }
+                            ConnectionSprite::DiagLRUL => {
+                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
+                            }
+                            ConnectionSprite::Other(_) => {
+                                let coords = self.place(origin);
+                                Rect::new(
+                                    coords.0 + NODE_WIDTH / 2 - 1,
+                                    coords.1 + NODE_HEIGHT,
+                                    1,
+                                    1,
+                                )
+                            }
+                            _ => panic!("Undirected sprite match received directed sprite."),
+                        }
+                    };
+                    match con_widget.sprite {
+                        ConnectionSprite::Other(_) => longer_connections.push((area, con_widget)),
+                        _ => con_widget.render(area, buf),
+                    }
                 }
             }
             // for connection in node.connections.iter() {
