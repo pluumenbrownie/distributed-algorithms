@@ -85,14 +85,3 @@ impl Widget for NodeWidget {
         buf.set_string(area.left(), area.top() + 2, "████", self.style);
     }
 }
-
-impl Widget for connection::ConnectionWidget {
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        for (content, line) in self.sprite.get().into_iter().zip(0u16..) {
-            buf.set_string(area.left(), area.top() + line, content, self.style);
-        }
-    }
-}

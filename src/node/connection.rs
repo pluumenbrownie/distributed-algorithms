@@ -1,4 +1,4 @@
-use ratatui::style::Style;
+use ratatui::{buffer::Buffer, layout::Rect, style::Style, widgets::Widget};
 use serde::{Deserialize, Serialize};
 
 use super::super::Location;
@@ -115,6 +115,23 @@ impl Connection {
             ConnectionSprite::UndirVertical
         } else {
             ConnectionSprite::Other(self.other.clone())
+        }
+    }
+}
+
+impl Widget for ConnectionWidget {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        for (content, line) in self.sprite.get().into_iter().zip(0u16..) {
+            let white_space = content.chars().filter(|c| c.is_whitespace()).count();
+            buf.set_string(
+                area.left() + white_space as u16,
+                area.top() + line,
+                content.trim(),
+                self.style,
+            );
         }
     }
 }
