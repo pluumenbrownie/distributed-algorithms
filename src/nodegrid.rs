@@ -13,7 +13,10 @@ use super::{NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH};
 
 use crate::{
     location::Location,
-    node::{self, Connection, ConnectionSprite, ConnectionWidget, Node, NodeWidget},
+    node::{
+        self, Node, NodeWidget,
+        connection::{Connection, ConnectionSprite, ConnectionWidget},
+    },
 };
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

@@ -1,7 +1,6 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 
 use anyhow::{Context, Result, anyhow};
-use node::Connection;
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
@@ -20,6 +19,7 @@ use std::{
 use tui_textarea::TextArea;
 
 use location::Location;
+use node::connection::Connection;
 
 mod location;
 mod node;
