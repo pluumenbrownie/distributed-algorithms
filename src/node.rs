@@ -1,18 +1,12 @@
 use anyhow::Result;
-use connection::Connection;
 use ratatui::{buffer::Buffer, layout::Rect, prelude::Stylize, style::Style, widgets::Widget};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::Location;
+use crate::Location;
+use connection::Connection;
 
 pub mod connection;
-
-#[derive(Debug, Default, Clone)]
-pub(crate) struct NodeWidget {
-    node: Node,
-    style: Style,
-}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub(crate) struct Node {
@@ -50,6 +44,12 @@ pub(crate) fn pad(width: u16, output: &mut String) {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub(crate) struct NodeWidget {
+    node: Node,
+    style: Style,
+}
+
 impl NodeWidget {
     pub fn from(node: &Node, style: Style) -> Self {
         NodeWidget {
@@ -85,3 +85,5 @@ impl Widget for NodeWidget {
         buf.set_string(area.left(), area.top() + 2, "████", self.style);
     }
 }
+
+mod centralized;

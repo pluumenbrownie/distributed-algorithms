@@ -1,6 +1,7 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 
 use anyhow::{Context, Result, anyhow};
+use nodegrid::{NodeGrid, NodeGridDisplay};
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
@@ -9,7 +10,10 @@ use ratatui::{
     style::{Style, Stylize},
     symbols::border,
     text::Line,
-    widgets::{Block, Clear, Widget},
+    widgets::{
+        Block, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarState, StatefulWidget,
+        Widget, Wrap,
+    },
 };
 use std::{
     env, fs,
@@ -17,6 +21,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tui_textarea::TextArea;
+use unicode_segmentation::UnicodeSegmentation;
 
 use location::Location;
 use node::connection::Connection;
@@ -95,9 +100,9 @@ impl PopupState {
                 Line::from(" <Esc> Cancel - <Enter> Create <Alt+Enter> Create undirected ")
                     .right_aligned()
             }
-            Self::Small => Line::from(" Close with <Esc> ").right_aligned(),
+            Self::Small => Line::from(" Close with <Esc> - <Enter> Log ").right_aligned(),
             Self::Edit => Line::from(" <Esc> Cancel - <Ctrl+s> Apply ").right_aligned(),
-            Self::Large => Line::from(" Close with <Esc> ").right_aligned(),
+            Self::Large => Line::from(" Close with <Esc> - <Alt+Enter> Log ").right_aligned(),
         }
     }
 
@@ -115,7 +120,7 @@ impl PopupState {
             }
             Self::New => String::from(""),
             Self::Pick => String::from(""),
-            Self::Connect => String::from("name 1.0"),
+            Self::Connect => String::from("1.0 n"),
             Self::Small => String::from(""),
             Self::Edit => app.get_node_serialized(),
             Self::Large => String::from(""),
@@ -123,12 +128,28 @@ impl PopupState {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum SidebarState {
+    #[default]
+    Hidden,
+    Log,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Sidebar<'a> {
+    width: u16,
+    block: Block<'a>,
+    scroll_state: usize,
+    log: Vec<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct App<'a> {
     exit: bool,
-    node_display: nodegrid::NodeGridDisplay<'a>,
-    // show_grid: bool,
+    node_display: NodeGridDisplay<'a>,
     state: AppState,
+    sidebar_state: SidebarState,
+    sidebar: Sidebar<'a>,
     textarea: TextArea<'a>,
     latest_dir: PathBuf,
     latest_file: String,
@@ -136,8 +157,8 @@ pub struct App<'a> {
 
 fn main() -> Result<()> {
     let mut terminal = ratatui::init();
-    let grid = nodegrid::NodeGrid::default();
-    let node_display = nodegrid::NodeGridDisplay::new(grid.clone());
+    let grid = NodeGrid::default();
+    let node_display = NodeGridDisplay::new(grid.clone());
     let mut app = App {
         node_display,
         latest_dir: env::current_dir()?,
@@ -162,6 +183,32 @@ impl App<'_> {
 
     fn draw(&self, frame: &mut Frame) {
         frame.render_widget(self, frame.area());
+    }
+
+    fn get_instructions(&self) -> Line<'_> {
+        match self.state {
+            AppState::Default => Line::from(vec![
+                " New node ".into(),
+                "<N>".blue().bold(),
+                " Pick node ".into(),
+                "<P>".blue().bold(),
+                " Save grid ".into(),
+                "<Ctrl+S>".blue().bold(),
+                " Load grid ".into(),
+                "<Ctrl+O>".blue().bold(),
+                " Quit ".into(),
+                "<Q> ".blue().bold(),
+            ]),
+            AppState::Selection => Line::from(vec![
+                " Move ".into(),
+                "<󰁍󰁅󰁝󰁔>".blue().bold(),
+                " Edit ".into(),
+                "<E>".blue().bold(),
+                " Place node ".into(),
+                "<Enter> ".blue().bold(),
+            ]),
+            AppState::Popup(_) => Line::from(" Follow instructions in popup "),
+        }
     }
 
     fn handle_events(&mut self) -> Result<()> {
@@ -189,7 +236,7 @@ impl App<'_> {
                 PopupState::Pick => self.pick_textarea()?,
                 PopupState::Edit => self.edit_textarea()?,
                 PopupState::Large => {
-                    self.handle_textarea_key_event()?;
+                    self.handle_large_textarea_key_event()?;
                 }
                 PopupState::Small => {
                     self.handle_textarea_key_event()?;
@@ -213,6 +260,9 @@ impl App<'_> {
             KeyCode::Char('t') => self.open_popup(PopupState::Small),
             KeyCode::Char('y') => self.open_popup(PopupState::Large),
             KeyCode::Char('n') => self.open_popup(PopupState::New),
+            KeyCode::Char('j') => self.sidebar_scroll_down(),
+            KeyCode::Char('k') => self.sidebar_scroll_up(),
+            KeyCode::Char('\\') => self.toggle_sidebar(),
             _ => {}
         }
         Ok(())
@@ -251,6 +301,25 @@ impl App<'_> {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 match key_event.code {
                     KeyCode::Esc => self.state_default(),
+                    KeyCode::Enter => self.log_textarea(),
+                    _ => {
+                        self.textarea.input(key_event);
+                    }
+                }
+            }
+            _ => {}
+        };
+        Ok(())
+    }
+
+    fn handle_large_textarea_key_event(&mut self) -> Result<()> {
+        match event::read()? {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                match key_event.code {
+                    KeyCode::Esc => self.state_default(),
+                    KeyCode::Enter if key_event.modifiers == KeyModifiers::ALT => {
+                        self.log_textarea()
+                    }
                     _ => {
                         self.textarea.input(key_event);
                     }
@@ -390,7 +459,7 @@ impl App<'_> {
                             self.textarea.lines()[0]
                         ))?;
                         let connection =
-                            Connection::new(input.0.to_string(), input.1.parse::<f64>()?);
+                            Connection::new(input.1.to_string(), input.0.parse::<f64>()?);
                         if self.connect_selection(&connection).is_ok() {
                             if key_event.modifiers.contains(KeyModifiers::ALT) {
                                 if self.connect_other(&connection).is_ok() {
@@ -422,6 +491,8 @@ impl App<'_> {
                 .title_top(state.title_top())
                 .title_bottom(state.title_bottom()),
         );
+        self.textarea
+            .set_cursor_line_style(Style::default().not_underlined());
 
         // Move cursor to the end of the text
         self.textarea
@@ -468,6 +539,33 @@ impl App<'_> {
     fn connect_other(&mut self, connection: &Connection) -> Result<()> {
         self.node_display.grid.connect_reverse(connection)
     }
+
+    fn log_textarea(&mut self) {
+        self.log(&mut self.textarea.lines().to_vec());
+        self.state_default();
+    }
+
+    fn log(&mut self, input: &mut Vec<String>) {
+        self.sidebar.log.append(input);
+    }
+
+    fn toggle_sidebar(&mut self) {
+        if self.sidebar.width == 0 {
+            self.sidebar.width = 50
+        }
+        self.sidebar_state = match self.sidebar_state {
+            SidebarState::Hidden => SidebarState::Log,
+            SidebarState::Log => SidebarState::Hidden,
+        }
+    }
+
+    fn sidebar_scroll_down(&mut self) {
+        self.sidebar.scroll_state = self.sidebar.scroll_state.saturating_add(1);
+    }
+
+    fn sidebar_scroll_up(&mut self) {
+        self.sidebar.scroll_state = self.sidebar.scroll_state.saturating_sub(1);
+    }
 }
 
 impl Widget for &App<'_> {
@@ -475,40 +573,46 @@ impl Widget for &App<'_> {
         let title = Line::from(vec![
             " Current state: ".into(),
             format!("{:?}", self.state).into(),
+            " Sidebar: ".into(),
+            format!("{:?}", self.sidebar_state).into(),
             " ".into(),
         ]);
-        let instructions = match self.state {
-            AppState::Default => Line::from(vec![
-                " New node ".into(),
-                "<N>".blue().bold(),
-                " Pick node ".into(),
-                "<P>".blue().bold(),
-                " Save grid ".into(),
-                "<Ctrl+S>".blue().bold(),
-                " Load grid ".into(),
-                "<Ctrl+O>".blue().bold(),
-                " Quit ".into(),
-                "<Q> ".blue().bold(),
-            ]),
-            AppState::Selection => Line::from(vec![
-                " Move ".into(),
-                "<󰁍󰁅󰁝󰁔>".blue().bold(),
-                " Edit ".into(),
-                "<E>".blue().bold(),
-                " Place node ".into(),
-                "<Enter> ".blue().bold(),
-            ]),
-            AppState::Popup(_) => Line::from(" Follow instructions in popup "),
-        };
+        let instructions = self.get_instructions();
 
         let block_style = Style::default();
-        let block = Block::bordered()
+        let node_block = Block::bordered()
             .title(title.centered())
             .title_bottom(instructions.centered())
             .border_style(block_style)
             .border_set(border::THICK);
 
-        self.node_display.clone().block(block).render(area, buf);
+        match self.sidebar_state {
+            SidebarState::Hidden => {
+                self.node_display
+                    .clone()
+                    .block(node_block)
+                    .render(area, buf);
+            }
+            SidebarState::Log => {
+                let sidebar_block = Block::bordered()
+                    .border_style(block_style)
+                    .border_set(border::THICK);
+                let layout = Layout::horizontal([
+                    Constraint::Min(0),
+                    Constraint::Percentage(self.sidebar.width),
+                ]);
+                let [node_area, sidebar_area] = layout.areas(area);
+
+                self.node_display
+                    .clone()
+                    .block(node_block)
+                    .render(node_area, buf);
+                self.sidebar
+                    .clone()
+                    .block(sidebar_block)
+                    .render(sidebar_area, buf);
+            }
+        };
 
         match self.state {
             AppState::Default => {}
@@ -525,7 +629,59 @@ impl Widget for &App<'_> {
                     self.textarea.render(area, buf);
                 }
             },
+        };
+    }
+}
+
+impl<'a> Sidebar<'a> {
+    /// Surrounds the `Sidebar` with a `Block`.
+    pub fn block(mut self, block: Block<'a>) -> Self {
+        self.block = block;
+        self
+    }
+
+    fn create_wrapped_lines(&mut self, max_width: u16) -> Vec<Line<'a>> {
+        let mut output = vec![];
+        for line in self.log.iter() {
+            let mut next_line = String::new();
+            let mut length = 0;
+            for grapheme in line.graphemes(true) {
+                if length == max_width {
+                    output.push(Line::from(next_line));
+                    next_line = String::new();
+                    next_line.clear();
+                    length = 0
+                }
+                next_line.push_str(grapheme);
+                length += 1;
+            }
+            output.push(Line::from(next_line));
         }
+        output
+    }
+}
+
+impl Sidebar<'_> {}
+
+impl Widget for Sidebar<'_> {
+    fn render(mut self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        let interior = self.block.inner(area);
+        let lines: Vec<_> = self.create_wrapped_lines(interior.width);
+        let length = lines.len();
+        let overflow = length.saturating_sub(interior.height.into());
+        self.scroll_state = self.scroll_state.clamp(0, overflow);
+        let mut state = ScrollbarState::new(overflow).position(self.scroll_state);
+
+        let text = Paragraph::new(lines)
+            .block(self.block)
+            .scroll((self.scroll_state as u16, 0));
+
+        text.render(area, buf);
+        Scrollbar::new(ratatui::widgets::ScrollbarOrientation::VerticalRight)
+            .render(area, buf, &mut state);
     }
 }
 

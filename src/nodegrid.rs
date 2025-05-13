@@ -9,15 +9,24 @@ use ratatui::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH};
-
 use crate::{
+    NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH,
     location::Location,
     node::{
-        self, Node, NodeWidget,
+        Node, NodeWidget,
         connection::{Connection, ConnectionSprite, ConnectionWidget},
     },
 };
+
+pub mod algorithm_traits;
+mod snapshots {
+    use super::NodeGrid;
+    trait ChandyLamport {}
+
+    impl NodeGrid {
+        pub fn chandy_lamport(&mut self) {}
+    }
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NodeGrid {
