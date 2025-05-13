@@ -1,0 +1,104 @@
+{
+  "nodes": [
+    {
+      "name": "u",
+      "id": 2,
+      "connections": [
+        {
+          "other": "p0",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 1,
+        "y": 0
+      }
+    },
+    {
+      "name": "a",
+      "id": 3,
+      "connections": [
+        {
+          "other": "p0",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 1,
+        "y": 1
+      }
+    },
+    {
+      "name": "l",
+      "id": 4,
+      "connections": [
+        {
+          "other": "p0",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 0,
+        "y": 2
+      }
+    },
+    {
+      "name": "w",
+      "id": 5,
+      "connections": [
+        {
+          "other": "p0",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 1,
+        "y": 2
+      }
+    },
+    {
+      "name": "p0",
+      "id": 1,
+      "connections": [
+        {
+          "other": "l",
+          "weight": 1.0
+        },
+        {
+          "other": "w",
+          "weight": 1.0
+        },
+        {
+          "other": "a",
+          "weight": 1.0
+        },
+        {
+          "other": "u",
+          "weight": 1.0
+        },
+        {
+          "other": "f",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "name": "f",
+      "id": 6,
+      "connections": [
+        {
+          "other": "p0",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 2,
+        "y": 1
+      }
+    }
+  ]
+}

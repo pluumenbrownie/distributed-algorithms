@@ -1,0 +1,272 @@
+{
+  "nodes": [
+    {
+      "name": "u1",
+      "id": 2,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 1,
+        "y": 0
+      }
+    },
+    {
+      "name": "u2",
+      "id": 3,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 2,
+        "y": 0
+      }
+    },
+    {
+      "name": "u3",
+      "id": 4,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 3,
+        "y": 0
+      }
+    },
+    {
+      "name": "u4",
+      "id": 5,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 1,
+        "y": 1
+      }
+    },
+    {
+      "name": "u5",
+      "id": 6,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 1,
+        "y": 2
+      }
+    },
+    {
+      "name": "u6",
+      "id": 7,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 2,
+        "y": 2
+      }
+    },
+    {
+      "name": "u7",
+      "id": 8,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 3,
+        "y": 1
+      }
+    },
+    {
+      "name": "u8",
+      "id": 9,
+      "connections": [
+        {
+          "other": "un",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 3,
+        "y": 2
+      }
+    },
+    {
+      "name": "un",
+      "id": 1,
+      "connections": [
+        {
+          "other": "u1",
+          "weight": 1.0
+        },
+        {
+          "other": "u2",
+          "weight": 1.0
+        },
+        {
+          "other": "u3",
+          "weight": 1.0
+        },
+        {
+          "other": "u4",
+          "weight": 1.0
+        },
+        {
+          "other": "u5",
+          "weight": 1.0
+        },
+        {
+          "other": "u6",
+          "weight": 1.0
+        },
+        {
+          "other": "u7",
+          "weight": 1.0
+        },
+        {
+          "other": "u8",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 2,
+        "y": 1
+      }
+    },
+    {
+      "name": "d1",
+      "id": 11,
+      "connections": [],
+      "location": {
+        "x": 6,
+        "y": 0
+      }
+    },
+    {
+      "name": "d2",
+      "id": 12,
+      "connections": [],
+      "location": {
+        "x": 7,
+        "y": 0
+      }
+    },
+    {
+      "name": "d3",
+      "id": 13,
+      "connections": [],
+      "location": {
+        "x": 8,
+        "y": 0
+      }
+    },
+    {
+      "name": "d4",
+      "id": 14,
+      "connections": [],
+      "location": {
+        "x": 6,
+        "y": 1
+      }
+    },
+    {
+      "name": "d7",
+      "id": 17,
+      "connections": [],
+      "location": {
+        "x": 8,
+        "y": 1
+      }
+    },
+    {
+      "name": "d6",
+      "id": 16,
+      "connections": [],
+      "location": {
+        "x": 7,
+        "y": 2
+      }
+    },
+    {
+      "name": "d5",
+      "id": 15,
+      "connections": [],
+      "location": {
+        "x": 6,
+        "y": 2
+      }
+    },
+    {
+      "name": "d8",
+      "id": 18,
+      "connections": [],
+      "location": {
+        "x": 8,
+        "y": 2
+      }
+    },
+    {
+      "name": "di",
+      "id": 10,
+      "connections": [
+        {
+          "other": "d1",
+          "weight": 1.0
+        },
+        {
+          "other": "d2",
+          "weight": 1.0
+        },
+        {
+          "other": "d3",
+          "weight": 1.0
+        },
+        {
+          "other": "d4",
+          "weight": 1.0
+        },
+        {
+          "other": "d5",
+          "weight": 1.0
+        },
+        {
+          "other": "d6",
+          "weight": 1.0
+        },
+        {
+          "other": "d7",
+          "weight": 1.0
+        },
+        {
+          "other": "d8",
+          "weight": 1.0
+        }
+      ],
+      "location": {
+        "x": 7,
+        "y": 1
+      }
+    }
+  ]
+}
