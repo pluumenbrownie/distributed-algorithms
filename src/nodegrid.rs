@@ -3,11 +3,13 @@ use std::cmp;
 use anyhow::{Ok, Result, anyhow};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Offset, Rect},
     style::Style,
-    widgets::{Block, Widget},
+    text::ToText,
+    widgets::{Block, ListItem, Widget},
 };
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumIter, FromRepr};
 
 use crate::{
     NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH,
@@ -20,11 +22,158 @@ use crate::{
 
 pub mod algorithm_traits;
 mod snapshots {
-    use super::NodeGrid;
-    trait ChandyLamport {}
+    use anyhow::{Ok, Result, anyhow};
+    use rand::seq::IteratorRandom;
+    use std::{collections::VecDeque, fmt::format};
+
+    use crate::node::{Node, connection};
+
+    use super::{Algorithm, NodeGrid};
+
+    #[derive(Debug, Default, Clone)]
+    struct ChandyLamportNode {
+        node: Node,
+        snapshot: bool,
+    }
+
+    impl ChandyLamportNode {
+        fn start_snapshot(&mut self, logger: &mut Vec<String>) -> VecDeque<ChandyLamportMessage> {
+            self.snapshot = true;
+
+            let mut outgoing = VecDeque::new();
+
+            for connection in self.node.connections.iter() {
+                outgoing.push_back(ChandyLamportMessage {
+                    sender: self.node.name.clone(),
+                    destination: connection.other.clone(),
+                });
+            }
+            log_sent_messages(&outgoing, logger);
+
+            outgoing
+        }
+
+        fn handle_message(
+            &mut self,
+            mesg: ChandyLamportMessage,
+            logger: &mut Vec<String>,
+        ) -> VecDeque<ChandyLamportMessage> {
+            logger.push(format!("{} received {:?}", self.node.name, mesg));
+
+            if self.snapshot {
+                return VecDeque::new();
+            }
+
+            self.start_snapshot(logger)
+        }
+    }
+
+    #[derive(Debug, Default, Clone)]
+    struct ChandyLamportMessage {
+        sender: String,
+        destination: String,
+    }
 
     impl NodeGrid {
-        pub fn chandy_lamport(&mut self) {}
+        pub fn chandy_lamport(&mut self, logger: &mut Vec<String>) -> Result<()> {
+            if self.nodes.is_empty() {
+                logger.push("No nodes in grid.".to_string());
+                return Err(anyhow!("No nodes in grid."));
+            }
+
+            let mut nodes = self.wrap_nodes(logger);
+            let mut messages = VecDeque::new();
+
+            let initiator = choose_initiator(logger, &nodes);
+
+            let mut response = node_by_name(&mut nodes, initiator).start_snapshot(logger);
+            messages.append(&mut response);
+
+            while !messages.is_empty() {
+                let mesg = messages.pop_front().unwrap();
+                let mut response =
+                    node_by_name(&mut nodes, mesg.destination.clone()).handle_message(mesg, logger);
+                messages.append(&mut response);
+            }
+
+            if nodes.iter().all(|n| n.snapshot) {
+                logger.push("Snapshot completed succesfully.".to_string());
+            } else {
+                logger.push("Snapshot did not complete.".to_string());
+            }
+
+            Ok(())
+        }
+
+        fn wrap_nodes(&mut self, logger: &mut Vec<String>) -> Vec<ChandyLamportNode> {
+            let nodes: Vec<_> = self
+                .nodes
+                .iter()
+                .map(|n| ChandyLamportNode {
+                    node: n.clone(),
+                    ..Default::default()
+                })
+                .collect();
+            logger.push(format!(
+                "Started Chandy-Lampart snapshot with {} nodes.",
+                nodes.len()
+            ));
+            nodes
+        }
+
+        pub(crate) fn run_algorithm(
+            &mut self,
+            algorithm: Algorithm,
+            logger: &mut Vec<String>,
+        ) -> Result<()> {
+            let result = match algorithm {
+                Algorithm::ChandyLamport => self.chandy_lamport(logger),
+                Algorithm::LaiYang => todo!("To early bro."),
+            };
+            if result.is_err() {
+                logger.push(format!("{} dit not complete.", algorithm));
+            }
+
+            Ok(())
+        }
+    }
+
+    fn log_sent_messages(messages: &VecDeque<ChandyLamportMessage>, logger: &mut Vec<String>) {
+        for mesg in messages.iter() {
+            logger.push(format!("{:?} send.", mesg));
+        }
+    }
+
+    fn node_by_name(nodes: &mut [ChandyLamportNode], name: String) -> &mut ChandyLamportNode {
+        nodes.iter_mut().find(|n| n.node.name == name).unwrap()
+    }
+
+    fn choose_initiator(logger: &mut Vec<String>, nodes: &[ChandyLamportNode]) -> String {
+        let initiator = nodes
+            .iter()
+            .choose(&mut rand::rng())
+            .unwrap()
+            .node
+            .name
+            .clone();
+        logger.push(format!("Choose {} as initator.", initiator));
+        initiator
+    }
+
+    // impl ChandyLamportNode {
+    //     fn receive(&self, message) ->
+    // }
+}
+
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, EnumIter, FromRepr)]
+pub enum Algorithm {
+    ChandyLamport = 0,
+    LaiYang = 1,
+}
+
+impl From<Algorithm> for ListItem<'_> {
+    fn from(value: Algorithm) -> Self {
+        ListItem::new(format!("{}", value))
     }
 }
 
@@ -172,143 +321,8 @@ impl NodeGrid {
 
         Ok(())
     }
-}
 
-impl Widget for NodeGrid {
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
-        let mut longer_connections = vec![];
-        for node in self.nodes.iter() {
-            let style = Style::default().fg(ratatui::style::Color::White);
-            for (origin, connection) in self
-                .nodes
-                .iter()
-                // .filter(|n| n.location > node.location)
-                .filter_map(|n| {
-                    let c = n.connections.iter().find(|c| c.other == node.name);
-                    c.map(|c| (n, c))
-                })
-            {
-                if node.connections.iter().any(|c| c.other == origin.name) {
-                    let con_widget = ConnectionWidget::new(
-                        connection.undirected_sprite(&origin.location, &node.location),
-                        style,
-                    );
-                    let area = {
-                        let coords = self.place_location(&node.location.lowest(&origin.location));
-                        match con_widget.sprite {
-                            ConnectionSprite::UndirHorizontal => Rect::new(
-                                coords.0 + NODE_WIDTH,
-                                coords.1 + NODE_HEIGHT / 2,
-                                NODE_H_SPACING,
-                                1,
-                            ),
-                            ConnectionSprite::UndirVertical => Rect::new(
-                                coords.0 + NODE_WIDTH / 2,
-                                coords.1 + NODE_HEIGHT,
-                                1,
-                                NODE_V_SPACING,
-                            ),
-                            ConnectionSprite::UndirDiagLLUR => {
-                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
-                            }
-                            ConnectionSprite::UndirDiagULLR => {
-                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
-                            }
-                            ConnectionSprite::Other(_) => {
-                                let coords = self.place(origin);
-                                Rect::new(
-                                    coords.0 + NODE_WIDTH / 2 - 1,
-                                    coords.1 + NODE_HEIGHT,
-                                    1,
-                                    1,
-                                )
-                            }
-                            _ => panic!("Undirected sprite match received directed sprite."),
-                        }
-                    };
-                    match con_widget.sprite {
-                        ConnectionSprite::Other(_) => longer_connections.push((area, con_widget)),
-                        _ => con_widget.render(area, buf),
-                    }
-                } else {
-                    let con_widget = ConnectionWidget::new(
-                        connection.directed_sprite(&origin.location, &node.location),
-                        style,
-                    );
-                    let area = {
-                        let coords = self.place_location(&node.location.lowest(&origin.location));
-                        match con_widget.sprite {
-                            ConnectionSprite::Left => Rect::new(
-                                coords.0 + NODE_WIDTH,
-                                coords.1 + NODE_HEIGHT / 2,
-                                NODE_H_SPACING,
-                                1,
-                            ),
-                            ConnectionSprite::Right => Rect::new(
-                                coords.0 + NODE_WIDTH,
-                                coords.1 + NODE_HEIGHT / 2,
-                                NODE_H_SPACING,
-                                1,
-                            ),
-                            ConnectionSprite::Upwards => Rect::new(
-                                coords.0 + NODE_WIDTH / 2,
-                                coords.1 + NODE_HEIGHT,
-                                1,
-                                NODE_V_SPACING,
-                            ),
-                            ConnectionSprite::Downwards => Rect::new(
-                                coords.0 + NODE_WIDTH / 2,
-                                coords.1 + NODE_HEIGHT,
-                                1,
-                                NODE_V_SPACING,
-                            ),
-                            ConnectionSprite::DiagLLUR => {
-                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
-                            }
-                            ConnectionSprite::DiagURLL => {
-                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 3, 5)
-                            }
-                            ConnectionSprite::DiagULLR => {
-                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
-                            }
-                            ConnectionSprite::DiagLRUL => {
-                                Rect::new(coords.0 + NODE_WIDTH - 1, coords.1 + NODE_HEIGHT, 5, 3)
-                            }
-                            ConnectionSprite::Other(_) => {
-                                let coords = self.place(origin);
-                                Rect::new(
-                                    coords.0 + NODE_WIDTH / 2 - 1,
-                                    coords.1 + NODE_HEIGHT,
-                                    1,
-                                    1,
-                                )
-                            }
-                            _ => panic!("Undirected sprite match received directed sprite."),
-                        }
-                    };
-                    match con_widget.sprite {
-                        ConnectionSprite::Other(_) => longer_connections.push((area, con_widget)),
-                        _ => con_widget.render(area, buf),
-                    }
-                }
-            }
-            // for connection in node.connections.iter() {
-            //     // if self.nodes.iter().any(|n| {
-            //     //     n.connections.iter().any(|c| c.other == node.name)
-            //     //         && node.name.cmp(&n.name).is_gt()
-            //     // }) {
-            //     //     continue;
-            //     // }
-
-            // }
-            // let node_widget = NodeWidget::from(node, style);
-            // let (x, y) = self.place(node);
-            // let area = Rect::new(x, y, NODE_WIDTH, NODE_HEIGHT);
-            // node_widget.render(area, buf);
-        }
+    fn render_nodes(&self, buf: &mut Buffer) {
         for node in self.nodes.iter() {
             let style = Style::default().fg(ratatui::style::Color::Green);
             let (x, y) = self.place(node);
@@ -316,6 +330,9 @@ impl Widget for NodeGrid {
             let area = Rect::new(x, y, NODE_WIDTH, NODE_HEIGHT);
             node_widget.render(area, buf);
         }
+    }
+
+    fn render_floating_nodes(&self, buf: &mut Buffer) {
         for node in self.floating_nodes.iter() {
             let style = Style::default().fg(ratatui::style::Color::Cyan);
             let (x, y) = self.place(node);
@@ -323,9 +340,64 @@ impl Widget for NodeGrid {
             let area = Rect::new(x, y, NODE_WIDTH, NODE_HEIGHT);
             node_widget.render(area, buf);
         }
+    }
+
+    fn render_connections(&self, buf: &mut Buffer) {
+        let mut longer_connections = vec![];
+
+        for node in self.nodes.iter() {
+            let style = Style::default();
+
+            for (origin, connection) in self.nodes.iter().filter_map(|n| {
+                n.connections
+                    .iter()
+                    .find(|c| c.other == node.name)
+                    .map(|c| (n, c))
+            }) {
+                let con_widget = if node.connections.iter().any(|c| c.other == origin.name) {
+                    ConnectionWidget::new(
+                        connection.undirected_sprite(&origin.location, &node.location),
+                        style,
+                    )
+                } else {
+                    ConnectionWidget::new(
+                        connection.directed_sprite(&origin.location, &node.location),
+                        style,
+                    )
+                };
+
+                let area = {
+                    let coords = match con_widget.sprite {
+                        ConnectionSprite::Other(_) => self.place(origin),
+                        _ => self.place_location(&node.location.lowest(&origin.location)),
+                    };
+                    con_widget.sprite.get_area().offset(Offset {
+                        x: coords.0 as i32,
+                        y: coords.1 as i32,
+                    })
+                };
+
+                match con_widget.sprite {
+                    ConnectionSprite::Other(_) => longer_connections.push((area, con_widget)),
+                    _ => con_widget.render(area, buf),
+                }
+            }
+        }
+
         for (area, connection) in longer_connections {
             connection.render(area, buf);
         }
+    }
+}
+
+impl Widget for NodeGrid {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        self.render_connections(buf);
+        self.render_nodes(buf);
+        self.render_floating_nodes(buf);
     }
 }
 

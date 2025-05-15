@@ -1,17 +1,17 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 
 use anyhow::{Context, Result, anyhow};
-use nodegrid::{NodeGrid, NodeGridDisplay};
+use nodegrid::{Algorithm, NodeGrid, NodeGridDisplay};
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     layout::{Constraint, Flex, Layout, Rect},
-    style::{Style, Stylize},
+    style::{Style, Styled, Stylize},
     symbols::border,
-    text::Line,
+    text::{Line, ToLine},
     widgets::{
-        Block, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarState, StatefulWidget,
+        Block, Clear, List, ListState, Paragraph, Scrollbar, ScrollbarState, StatefulWidget, Tabs,
         Widget, Wrap,
     },
 };
@@ -20,6 +20,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
+use strum::{Display, EnumIs, EnumIter, FromRepr, IntoEnumIterator};
 use tui_textarea::TextArea;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -128,19 +129,38 @@ impl PopupState {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, EnumIs)]
 enum SidebarState {
     #[default]
     Hidden,
+    Shown,
+}
+
+#[derive(Debug, Display, Default, Clone, Copy, PartialEq, Eq, EnumIter, FromRepr)]
+enum SidebarContent {
+    #[default]
+    #[strum(to_string = "Log")]
     Log,
+    #[strum(to_string = "Selector")]
+    Selector,
+}
+
+impl SidebarContent {
+    fn title(self) -> Line<'static> {
+        format!("  {self}  ")
+            .set_style(Style::default().reversed())
+            .into()
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Sidebar<'a> {
     width: u16,
     block: Block<'a>,
-    scroll_state: usize,
+    shown_content: SidebarContent,
     log: Vec<String>,
+    log_scroll_state: usize,
+    selector_scroll_state: usize,
 }
 
 #[derive(Debug, Default)]
@@ -263,6 +283,19 @@ impl App<'_> {
             KeyCode::Char('j') => self.sidebar_scroll_down(),
             KeyCode::Char('k') => self.sidebar_scroll_up(),
             KeyCode::Char('\\') => self.toggle_sidebar(),
+            KeyCode::Char('r') if self.sidebar_state.is_shown() => self.sidebar.selector(),
+            KeyCode::Char('e') if self.sidebar_state.is_shown() => self.sidebar.log(),
+            KeyCode::Enter
+                if self.sidebar_state.is_shown()
+                    & (self.sidebar.shown_content == SidebarContent::Selector) =>
+            {
+                let algorithm = Algorithm::from_repr(0)
+                    .ok_or_else(|| anyhow!("Parsing scroll state {} to Algorithm failed.", 0))?;
+                self.sidebar.log();
+                self.node_display
+                    .grid
+                    .run_algorithm(algorithm, &mut self.sidebar.log)?;
+            }
             _ => {}
         }
         Ok(())
@@ -554,17 +587,33 @@ impl App<'_> {
             self.sidebar.width = 50
         }
         self.sidebar_state = match self.sidebar_state {
-            SidebarState::Hidden => SidebarState::Log,
-            SidebarState::Log => SidebarState::Hidden,
+            SidebarState::Hidden => SidebarState::Shown,
+            SidebarState::Shown => SidebarState::Hidden,
         }
     }
 
     fn sidebar_scroll_down(&mut self) {
-        self.sidebar.scroll_state = self.sidebar.scroll_state.saturating_add(1);
+        match self.sidebar.shown_content {
+            SidebarContent::Log => {
+                self.sidebar.log_scroll_state = self.sidebar.log_scroll_state.saturating_add(1)
+            }
+            SidebarContent::Selector => {
+                self.sidebar.selector_scroll_state =
+                    self.sidebar.selector_scroll_state.saturating_add(1)
+            }
+        };
     }
 
     fn sidebar_scroll_up(&mut self) {
-        self.sidebar.scroll_state = self.sidebar.scroll_state.saturating_sub(1);
+        match self.sidebar.shown_content {
+            SidebarContent::Log => {
+                self.sidebar.log_scroll_state = self.sidebar.log_scroll_state.saturating_sub(1)
+            }
+            SidebarContent::Selector => {
+                self.sidebar.selector_scroll_state =
+                    self.sidebar.selector_scroll_state.saturating_sub(1)
+            }
+        };
     }
 }
 
@@ -593,7 +642,7 @@ impl Widget for &App<'_> {
                     .block(node_block)
                     .render(area, buf);
             }
-            SidebarState::Log => {
+            SidebarState::Shown => {
                 let sidebar_block = Block::bordered()
                     .border_style(block_style)
                     .border_set(border::THICK);
@@ -633,6 +682,66 @@ impl Widget for &App<'_> {
     }
 }
 
+impl Sidebar<'_> {
+    fn render_log(mut self, area: Rect, buf: &mut Buffer) {
+        let interior = self.block.inner(area);
+        let lines: Vec<_> = self.create_wrapped_lines(interior.width);
+        let length = lines.len();
+        let overflow = length.saturating_sub(interior.height.into());
+        self.log_scroll_state = self.log_scroll_state.clamp(0, overflow);
+        let mut state = ScrollbarState::new(overflow).position(self.log_scroll_state);
+
+        let text = Paragraph::new(lines)
+            .block(self.block)
+            .scroll((self.log_scroll_state as u16, 0));
+
+        text.render(area, buf);
+        Scrollbar::new(ratatui::widgets::ScrollbarOrientation::VerticalRight)
+            .render(area, buf, &mut state);
+    }
+
+    fn render_tabs(&self, area: Rect, buf: &mut Buffer) {
+        let titles = SidebarContent::iter().map(SidebarContent::title);
+        let highlight_style = Style::default()
+            .reversed()
+            .fg(ratatui::style::Color::Cyan)
+            .bold();
+        let selected_tab_index = self.shown_content as usize;
+        Tabs::new(titles)
+            .style(Style::default())
+            .highlight_style(highlight_style)
+            .select(selected_tab_index)
+            .padding("", "")
+            .divider(" ")
+            .render(area, buf);
+    }
+
+    fn selector(&mut self) {
+        self.shown_content = SidebarContent::Selector;
+    }
+
+    fn log(&mut self) {
+        self.shown_content = SidebarContent::Log;
+    }
+
+    fn render_selector(&mut self, area: Rect, buf: &mut Buffer) {
+        let algorithms = Algorithm::iter();
+        let list = List::new(algorithms)
+            .block(self.block.clone())
+            .highlight_style(Style::default().reversed())
+            .highlight_symbol(">")
+            .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
+        self.selector_scroll_state = self.selector_scroll_state.clamp(0, list.len());
+
+        StatefulWidget::render(
+            list,
+            area,
+            buf,
+            &mut ListState::default().with_selected(Some(self.selector_scroll_state)),
+        );
+    }
+}
+
 impl<'a> Sidebar<'a> {
     /// Surrounds the `Sidebar` with a `Block`.
     pub fn block(mut self, block: Block<'a>) -> Self {
@@ -661,27 +770,18 @@ impl<'a> Sidebar<'a> {
     }
 }
 
-impl Sidebar<'_> {}
-
 impl Widget for Sidebar<'_> {
     fn render(mut self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
     {
-        let interior = self.block.inner(area);
-        let lines: Vec<_> = self.create_wrapped_lines(interior.width);
-        let length = lines.len();
-        let overflow = length.saturating_sub(interior.height.into());
-        self.scroll_state = self.scroll_state.clamp(0, overflow);
-        let mut state = ScrollbarState::new(overflow).position(self.scroll_state);
-
-        let text = Paragraph::new(lines)
-            .block(self.block)
-            .scroll((self.scroll_state as u16, 0));
-
-        text.render(area, buf);
-        Scrollbar::new(ratatui::widgets::ScrollbarOrientation::VerticalRight)
-            .render(area, buf, &mut state);
+        let [tab_area, content_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+        self.render_tabs(tab_area, buf);
+        match self.shown_content {
+            SidebarContent::Log => self.render_log(content_area, buf),
+            SidebarContent::Selector => self.render_selector(content_area, buf),
+        };
     }
 }
 

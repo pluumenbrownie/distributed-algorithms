@@ -2,6 +2,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style, widgets::Widget};
 use serde::{Deserialize, Serialize};
 
 use super::super::Location;
+use crate::{NODE_H_SPACING, NODE_HEIGHT, NODE_V_SPACING, NODE_WIDTH};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectionWidget {
@@ -58,6 +59,30 @@ impl ConnectionSprite {
             ConnectionSprite::DiagULLR => vec!["𜹙𜹠".into(), " 𜹒𜹍𜹠".into(), "   𜹒🡾".into()],
             ConnectionSprite::DiagLLUR => vec!["   𜹰🡽".into(), " 𜹰𜹍𜹑".into(), "𜹨𜹑".into()],
             ConnectionSprite::DiagURLL => vec!["   𜹰𜹖".into(), " 𜹰𜹍𜹑".into(), "🡿𜹑".into()],
+        }
+    }
+
+    pub fn get_area(&self) -> Rect {
+        match self {
+            ConnectionSprite::UndirHorizontal => {
+                Rect::new(NODE_WIDTH, NODE_HEIGHT / 2, NODE_H_SPACING, 1)
+            }
+            ConnectionSprite::UndirVertical => {
+                Rect::new(NODE_WIDTH / 2, NODE_HEIGHT, 1, NODE_V_SPACING)
+            }
+            ConnectionSprite::UndirDiagLLUR => Rect::new(NODE_WIDTH - 1, NODE_HEIGHT, 3, 5),
+            ConnectionSprite::UndirDiagULLR => Rect::new(NODE_WIDTH - 1, NODE_HEIGHT, 5, 3),
+            ConnectionSprite::Left => Rect::new(NODE_WIDTH, NODE_HEIGHT / 2, NODE_H_SPACING, 1),
+            ConnectionSprite::Right => Rect::new(NODE_WIDTH, NODE_HEIGHT / 2, NODE_H_SPACING, 1),
+            ConnectionSprite::Upwards => Rect::new(NODE_WIDTH / 2, NODE_HEIGHT, 1, NODE_V_SPACING),
+            ConnectionSprite::Downwards => {
+                Rect::new(NODE_WIDTH / 2, NODE_HEIGHT, 1, NODE_V_SPACING)
+            }
+            ConnectionSprite::DiagLLUR => Rect::new(NODE_WIDTH - 1, NODE_HEIGHT, 3, 5),
+            ConnectionSprite::DiagURLL => Rect::new(NODE_WIDTH - 1, NODE_HEIGHT, 3, 5),
+            ConnectionSprite::DiagULLR => Rect::new(NODE_WIDTH - 1, NODE_HEIGHT, 5, 3),
+            ConnectionSprite::DiagLRUL => Rect::new(NODE_WIDTH - 1, NODE_HEIGHT, 5, 3),
+            ConnectionSprite::Other(_) => Rect::new(NODE_WIDTH / 2 - 1, NODE_HEIGHT, 1, 1),
         }
     }
 }
