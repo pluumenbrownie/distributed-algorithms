@@ -48,6 +48,7 @@ enum AppState {
 enum PopupState {
     Save,
     Load,
+    Dump,
     New,
     Pick,
     Connect,
@@ -69,6 +70,7 @@ impl PopupState {
         match self {
             Self::Save => PopupSize::Small,
             Self::Load => PopupSize::Small,
+            Self::Dump => PopupSize::Small,
             Self::New => PopupSize::Small,
             Self::Pick => PopupSize::Small,
             Self::Connect => PopupSize::Small,
@@ -82,6 +84,7 @@ impl PopupState {
         match self {
             Self::Save => Line::from(" Save structure to... ").left_aligned(),
             Self::Load => Line::from(" Load structure... ").left_aligned(),
+            Self::Dump => Line::from(" Dump log to... ").left_aligned(),
             Self::New => Line::from(" Unique node name ").left_aligned(),
             Self::Pick => Line::from(" Pick node with name ").left_aligned(),
             Self::Connect => Line::from(" Create weighted connection ").left_aligned(),
@@ -95,6 +98,7 @@ impl PopupState {
         match self {
             Self::Save => Line::from(" <Esc> Cancel - <Enter> Save ").right_aligned(),
             Self::Load => Line::from(" <Esc> Cancel - <Enter> Load ").right_aligned(),
+            Self::Dump => Line::from(" <Esc> Cancel - <Enter> Dump ").right_aligned(),
             Self::New => Line::from(" <Esc> Cancel - <Enter> Create ").right_aligned(),
             Self::Pick => Line::from(" <Esc> Cancel - <Enter> Pick ").right_aligned(),
             Self::Connect => {
@@ -117,6 +121,11 @@ impl PopupState {
             Self::Load => {
                 let mut full_file = app.latest_dir.to_path_buf();
                 full_file.push(app.latest_file.clone());
+                full_file.display().to_string()
+            }
+            Self::Dump => {
+                let mut full_file = app.latest_dir.to_path_buf();
+                full_file.push("dump.txt");
                 full_file.display().to_string()
             }
             Self::New => String::from(""),
@@ -252,6 +261,7 @@ impl App<'_> {
             AppState::Popup(popup) => match popup {
                 PopupState::Save => self.save_textarea()?,
                 PopupState::Load => self.load_textarea()?,
+                PopupState::Dump => self.dump_textarea()?,
                 PopupState::New => self.new_textarea()?,
                 PopupState::Pick => self.pick_textarea()?,
                 PopupState::Edit => self.edit_textarea()?,
@@ -275,6 +285,9 @@ impl App<'_> {
             }
             KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.open_popup(PopupState::Load);
+            }
+            KeyCode::Char('d') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.open_popup(PopupState::Dump);
             }
             KeyCode::Char('p') => self.open_popup(PopupState::Pick),
             KeyCode::Char('t') => self.open_popup(PopupState::Small),
@@ -391,6 +404,30 @@ impl App<'_> {
             let path: PathBuf = app.textarea.lines()[0].parse()?;
             app.load_grid(&path)?;
             app.set_latest_location(path);
+            app.state_default();
+            Ok(())
+        };
+        self.confirm_cancel_textarea(&mut enter_func)
+    }
+
+    fn dump_textarea(&mut self) -> Result<()> {
+        let mut enter_func = |app: &mut App| {
+            let path: PathBuf = app.textarea.lines()[0].parse()?;
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(path)?;
+            let mut writer = io::BufWriter::new(file);
+            writer.write_all(
+                &app.sidebar
+                    .log
+                    .clone()
+                    .join("\n")
+                    .bytes()
+                    .collect::<Vec<u8>>(),
+            )?;
+            writer.flush()?;
             app.state_default();
             Ok(())
         };

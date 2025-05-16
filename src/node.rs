@@ -29,6 +29,10 @@ impl Node {
             }
         };
     }
+
+    pub fn index_connection(&self, other: &String) -> Option<usize> {
+        self.connections.iter().position(|c| &c.other == other)
+    }
 }
 
 pub(crate) fn pad(width: u16, output: &mut String) {
@@ -85,5 +89,3 @@ impl Widget for NodeWidget {
         buf.set_string(area.left(), area.top() + 2, "████", self.style);
     }
 }
-
-mod centralized;
