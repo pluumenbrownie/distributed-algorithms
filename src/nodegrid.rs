@@ -23,13 +23,13 @@ use crate::{
 mod snapshots;
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, EnumIter, FromRepr)]
-pub enum Algorithm {
-    ChandyLamport = 0,
-    LaiYang = 1,
+pub enum SelectedAlgorithm {
+    ChandyLamport,
+    LaiYang,
 }
 
-impl From<Algorithm> for ListItem<'_> {
-    fn from(value: Algorithm) -> Self {
+impl From<SelectedAlgorithm> for ListItem<'_> {
+    fn from(value: SelectedAlgorithm) -> Self {
         ListItem::new(format!("{}", value))
     }
 }
@@ -91,6 +91,14 @@ impl NodeGrid {
 
     fn next_id(&self) -> usize {
         self.nodes.iter().max_by_key(|&n| n.id).map_or(0, |n| n.id) + 1
+    }
+
+    fn check_not_empty(&self, logger: &mut Vec<String>) -> Result<()> {
+        if self.nodes.is_empty() {
+            logger.push("No nodes in grid.".to_string());
+            Err(anyhow!("No nodes in grid."))?;
+        }
+        Ok(())
     }
 
     pub(crate) fn move_node(&mut self, x: i8, y: i8) {

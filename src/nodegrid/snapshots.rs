@@ -1,28 +1,193 @@
 use anyhow::{Ok, Result, anyhow};
 use displaydoc::Display;
-use rand::seq::{IndexedRandom, IteratorRandom};
-use std::{collections::VecDeque, fmt::format};
+use rand::{
+    random_range,
+    seq::{IndexedRandom, IteratorRandom},
+};
+use std::{
+    collections::VecDeque,
+    fmt::{Display, format},
+    ops::{Deref, DerefMut},
+};
 
+use super::{NodeGrid, SelectedAlgorithm};
 use crate::node::{Node, connection};
 
-use super::{Algorithm, NodeGrid};
+fn log_sent_messages<T: Display>(messages: &VecDeque<T>, logger: &mut Vec<String>) {
+    for mesg in messages.iter() {
+        logger.push(format!("Sent {mesg}."));
+    }
+}
 
-#[derive(Debug, Default, Clone)]
-struct ChandyLamportNode {
-    node: Node,
-    state: isize,
-    received: Vec<String>,
-    snapshot: Option<Snapshot>,
+fn take_random_message<T: Display>(messages: &mut VecDeque<T>, logger: &mut Vec<String>) {
+    for mesg in messages.iter() {
+        logger.push(format!("Sent {mesg}."));
+    }
+}
+
+#[derive(Debug, Default)]
+struct Algorithm<N, M>
+where
+    N: NodeLike,
+    M: Mesg,
+{
+    nodes: Vec<N>,
+    messages: VecDeque<M>,
+}
+
+impl<N, M> Algorithm<N, M>
+where
+    N: NodeLike,
+    M: Mesg,
+{
+    fn wrap_nodes(nodes: &[Node]) -> Vec<N> {
+        let nodes: Vec<_> = nodes.iter().map(N::from).collect();
+        nodes
+    }
+
+    fn new(nodes: &[Node]) -> Algorithm<N, M> {
+        Self {
+            nodes: Self::wrap_nodes(nodes),
+            ..Default::default()
+        }
+    }
+
+    fn choose_initiator(&self, logger: &mut Vec<String>) -> String {
+        let initiator = self
+            .nodes
+            .iter()
+            .choose(&mut rand::rng())
+            .unwrap()
+            .name_clone();
+        logger.push(format!("Choose {} as initator.", initiator));
+        initiator
+    }
+
+    fn random_node(&mut self) -> &mut N {
+        self.nodes.iter_mut().choose(&mut rand::rng()).unwrap()
+    }
+
+    fn node_by_name(&mut self, name: String) -> &mut N {
+        self.nodes.iter_mut().find(|n| n.name() == name).unwrap()
+    }
+
+    fn pop_mesg(&mut self) -> Option<M> {
+        self.messages.pop_front()
+    }
+
+    fn has_messages(&self) -> bool {
+        !self.messages.is_empty()
+    }
+}
+
+trait Mesg: Clone + Default + Display {}
+
+/// Messages through a channel are received by a node in the same order as they
+/// were sent.
+trait Fifo: Mesg {}
+/// Messages can be received in any order, irrespective of the sending order.
+trait NonFifo: Mesg {}
+
+trait FifoChannels<M: Fifo> {
+    fn add_mesg(&mut self, mesg: M);
+    fn add_mesg_iter(&mut self, messages: &mut VecDeque<M>);
+}
+impl<M, N> FifoChannels<M> for Algorithm<N, M>
+where
+    N: NodeLike,
+    M: Fifo,
+{
+    fn add_mesg(&mut self, mesg: M) {
+        self.messages.push_back(mesg);
+    }
+    fn add_mesg_iter(&mut self, messages: &mut VecDeque<M>) {
+        self.messages.append(messages);
+    }
+}
+
+trait RandomChannels<M: NonFifo> {
+    fn add_mesg(&mut self, mesg: M);
+    fn add_mesg_iter(&mut self, messages: &mut VecDeque<M>);
+}
+impl<M, N> RandomChannels<M> for Algorithm<N, M>
+where
+    N: NodeLike,
+    M: NonFifo,
+{
+    /// Add message in a random index of the message queue.
+    fn add_mesg(&mut self, mesg: M) {
+        if self.has_messages() {
+            let index = random_range(0..self.messages.len());
+            self.messages.insert(index, mesg);
+        } else {
+            self.messages.push_back(mesg);
+        }
+    }
+    fn add_mesg_iter(&mut self, messages: &mut VecDeque<M>) {
+        for mesg in messages.drain(..) {
+            self.add_mesg(mesg);
+        }
+    }
+}
+
+trait NodeLike: for<'a> From<&'a Node> + Default {
+    fn name(&self) -> &str;
+    fn name_clone(&self) -> String {
+        self.name().to_string()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct MessageVec<T>(Vec<T>)
+where
+    T: Mesg;
+
+impl<T> From<&Vec<T>> for MessageVec<T>
+where
+    T: Mesg,
+{
+    fn from(vec: &Vec<T>) -> Self {
+        Self(vec.clone())
+    }
+}
+
+impl<T: Mesg> Deref for MessageVec<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T: Mesg> DerefMut for MessageVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> Display for MessageVec<T>
+where
+    T: Mesg,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            write!(f, "[]")
+        } else {
+            writeln!(f, "[")?;
+            for i in self.0.iter() {
+                writeln!(f, "    {i}")?;
+            }
+            write!(f, "]")
+        }
+    }
 }
 
 #[derive(Debug, Display, Default, Clone)]
-#[displaydoc("Snapshot({state}, {messages:?})")]
-struct Snapshot {
+struct Snapshot<T: Mesg> {
     state: isize,
-    messages: Vec<ChandyLamportMessage>,
+    timestamp: LamportsClock,
+    messages: MessageVec<T>,
 }
 
-impl Snapshot {
+impl<T: Mesg> Snapshot<T> {
     fn new(state: isize) -> Self {
         Snapshot {
             state,
@@ -31,202 +196,40 @@ impl Snapshot {
     }
 }
 
-impl ChandyLamportNode {
-    fn new(node: &Node) -> ChandyLamportNode {
-        ChandyLamportNode {
-            node: node.clone(),
-            ..Default::default()
-        }
-    }
-
-    fn create_snapshot(&mut self, logger: &mut Vec<String>) -> VecDeque<ChandyLamportMessage> {
-        self.snapshot = Some(Snapshot::new(self.state));
-        logger.push(format!(
-            "{} took {}",
-            self.node.name,
-            self.snapshot.as_ref().unwrap()
-        ));
-
-        let mut outgoing = VecDeque::new();
-
-        for connection in self.node.connections.iter() {
-            outgoing.push_back(ChandyLamportMessage {
-                sender: self.node.name.clone(),
-                destination: connection.other.clone(),
-                kind: ChLaMesgKind::Mark,
-            });
-        }
-        log_sent_messages(&outgoing, logger);
-
-        outgoing
-    }
-
-    fn handle_message(
-        &mut self,
-        mesg: ChandyLamportMessage,
-        logger: &mut Vec<String>,
-    ) -> VecDeque<ChandyLamportMessage> {
-        logger.push(format!("{} received {mesg}", self.node.name));
-
-        match mesg.kind {
-            ChLaMesgKind::Mark => {
-                let mut output = VecDeque::new();
-                if self.snapshot.is_none() {
-                    output = self.create_snapshot(logger);
-                }
-
-                self.received.push(mesg.sender.clone());
-                logger.push(format!(
-                    "{} notes it has received <mark> from {}.",
-                    self.node.name, mesg.sender
-                ));
-                output
-            }
-            ChLaMesgKind::Increment => {
-                self.update_snapshot(mesg, logger);
-                self.state += 1;
-                VecDeque::new()
-            }
-            ChLaMesgKind::Decrement => {
-                self.update_snapshot(mesg, logger);
-                self.state -= 1;
-                VecDeque::new()
-            }
-        }
-    }
-
-    fn update_snapshot(&mut self, mesg: ChandyLamportMessage, logger: &mut Vec<String>) {
-        if let Some(snapshot) = &mut self.snapshot {
-            if !self.received.contains(&mesg.sender) {
-                logger.push(format!("{} saves {mesg} in snapshot.", self.node.name));
-                snapshot.messages.push(mesg);
-            }
-        }
-    }
-
-    fn random_process(&mut self, logger: &mut Vec<String>) -> ChandyLamportMessage {
-        let destination = self
-            .node
-            .connections
-            .iter()
-            .choose(&mut rand::rng())
-            .expect("Node has no connections.");
-        let mesg = ChandyLamportMessage::random(self.node.name.clone(), destination.other.clone());
-        match mesg.kind {
-            ChLaMesgKind::Decrement => {
-                self.state += 1;
-                logger.push(format!("{}={} and send {mesg}", self.node.name, self.state));
-            }
-            ChLaMesgKind::Increment => {
-                self.state -= 1;
-                logger.push(format!("{}={} and send {mesg}", self.node.name, self.state));
-            }
-            _ => {}
-        };
-        mesg
+impl<T: Mesg> std::fmt::Display for Snapshot<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Snapshot({}, {})", self.state, &self.messages)
     }
 }
 
-#[derive(Debug, Display, Default, Clone)]
-#[displaydoc("<{kind}> {sender}->{destination}")]
-struct ChandyLamportMessage {
-    sender: String,
-    destination: String,
-    kind: ChLaMesgKind,
-}
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[displaydoc("LC({0})")]
+struct LamportsClock(usize);
+impl LamportsClock {
+    fn tick(&mut self) -> Self {
+        self.0 += 1;
+        *self
+    }
 
-impl ChandyLamportMessage {
-    fn random(sender: String, destination: String) -> Self {
-        Self {
-            sender,
-            destination,
-            kind: [ChLaMesgKind::Increment, ChLaMesgKind::Decrement]
-                .choose(&mut rand::rng())
-                .unwrap()
-                .to_owned(),
-        }
+    fn receive<T: LamportsMessage>(&mut self, mesg: &T) -> Self {
+        self.0 = self.max(&mut mesg.time()).0 + 1;
+        *self
     }
 }
 
-#[derive(Debug, Display, Default, Clone, PartialEq, Eq)]
-enum ChLaMesgKind {
-    #[default]
-    /// mark
-    Mark,
-    /// increment
-    Increment,
-    /// decrement
-    Decrement,
+trait LamportsMessage: Mesg {
+    fn time(&self) -> LamportsClock;
 }
 
 impl NodeGrid {
-    pub fn chandy_lamport(&mut self, logger: &mut Vec<String>) -> Result<()> {
-        if self.nodes.is_empty() {
-            logger.push("No nodes in grid.".to_string());
-            return Err(anyhow!("No nodes in grid."));
-        }
-
-        let mut nodes = self.wrap_nodes(logger);
-        let mut messages = VecDeque::new();
-
-        let initiator = choose_initiator(logger, &nodes);
-
-        for i in 0..5 {
-            let node = nodes.iter_mut().choose(&mut rand::rng()).unwrap();
-            messages.push_back(node.random_process(logger));
-        }
-
-        // while !messages.is_empty() {
-        //     let mesg = messages.pop_front().unwrap();
-        //     let mut response =
-        //         node_by_name(&mut nodes, mesg.destination.clone()).handle_message(mesg, logger);
-        //     messages.append(&mut response);
-        // }
-
-        let mut response = node_by_name(&mut nodes, initiator).create_snapshot(logger);
-        messages.append(&mut response);
-
-        for i in 0..5 {
-            let node = nodes.iter_mut().choose(&mut rand::rng()).unwrap();
-            let mesg = node.random_process(logger);
-            messages.push_back(mesg);
-        }
-
-        while !messages.is_empty() {
-            let mesg = messages.pop_front().unwrap();
-            let mut response =
-                node_by_name(&mut nodes, mesg.destination.clone()).handle_message(mesg, logger);
-            if !response.is_empty() {
-                messages.append(&mut response);
-                for i in 0..3 {
-                    let node = nodes.iter_mut().choose(&mut rand::rng()).unwrap();
-                    messages.push_back(node.random_process(logger));
-                }
-            }
-        }
-
-        verify_snapshot(logger, nodes);
-
-        Ok(())
-    }
-
-    fn wrap_nodes(&mut self, logger: &mut Vec<String>) -> Vec<ChandyLamportNode> {
-        let nodes: Vec<_> = self.nodes.iter().map(ChandyLamportNode::new).collect();
-        logger.push(format!(
-            "Started Chandy-Lampart snapshot with {} nodes.",
-            nodes.len()
-        ));
-        nodes
-    }
-
-    pub(crate) fn run_algorithm(
+    pub fn run_algorithm(
         &mut self,
-        algorithm: Algorithm,
+        algorithm: SelectedAlgorithm,
         logger: &mut Vec<String>,
     ) -> Result<()> {
         let result = match algorithm {
-            Algorithm::ChandyLamport => self.chandy_lamport(logger),
-            Algorithm::LaiYang => todo!("To early bro."),
+            SelectedAlgorithm::ChandyLamport => self.chandy_lamport(logger),
+            SelectedAlgorithm::LaiYang => self.lai_yang(logger),
         };
         if result.is_err() {
             logger.push(format!("{} did not complete.", algorithm));
@@ -236,63 +239,575 @@ impl NodeGrid {
     }
 }
 
-fn verify_snapshot(logger: &mut Vec<String>, nodes: Vec<ChandyLamportNode>) {
-    logger.push(String::new());
-    if nodes.iter().all(|n| n.snapshot.is_some()) {
-        logger.push("Snapshot completed.".to_string());
-        let snapshot_sum_of_states = nodes
-            .iter()
-            .fold(0isize, |acc, n| acc + n.snapshot.as_ref().unwrap().state);
-        let snapshot_sum_of_messages = nodes.iter().fold(0isize, |acc, n| {
-            acc + n
-                .snapshot
-                .as_ref()
-                .unwrap()
-                .messages
+mod chandylamport {
+    use anyhow::{Ok, Result, anyhow};
+    use displaydoc::Display;
+    use rand::seq::{IndexedRandom, IteratorRandom};
+    use std::{
+        collections::VecDeque,
+        default,
+        fmt::{Debug, format},
+        path::Display,
+    };
+
+    use crate::{
+        node::{Node, connection},
+        nodegrid::{NodeGrid, SelectedAlgorithm, snapshots::*},
+    };
+
+    #[derive(Debug, Default, Clone)]
+    struct AlgNode {
+        node: Node,
+        state: isize,
+        received: Vec<String>,
+        snapshot: Option<Snapshot<Message>>,
+    }
+
+    impl AlgNode {
+        fn create_snapshot(&mut self, logger: &mut Vec<String>) -> VecDeque<Message> {
+            self.snapshot = Some(Snapshot::new(self.state));
+            logger.push(format!(
+                "{} took {}",
+                self.name(),
+                self.snapshot.as_ref().unwrap()
+            ));
+
+            let mut outgoing = VecDeque::new();
+
+            for connection in self.node.connections.iter() {
+                outgoing.push_back(Message {
+                    sender: self.name_clone(),
+                    destination: connection.other.clone(),
+                    kind: MesgKind::Mark,
+                });
+            }
+            log_sent_messages(&outgoing, logger);
+
+            outgoing
+        }
+
+        fn handle_message(&mut self, mesg: Message, logger: &mut Vec<String>) -> VecDeque<Message> {
+            logger.push(format!("{} received {mesg}", self.name()));
+
+            match mesg.kind {
+                MesgKind::Mark => {
+                    let mut output = VecDeque::new();
+                    if self.snapshot.is_none() {
+                        output = self.create_snapshot(logger);
+                    }
+
+                    self.received.push(mesg.sender.clone());
+                    logger.push(format!(
+                        "{} notes it has received <mark> from {}.",
+                        self.name(),
+                        mesg.sender
+                    ));
+                    output
+                }
+                MesgKind::Increment => {
+                    self.update_snapshot(mesg, logger);
+                    self.state += 1;
+                    VecDeque::new()
+                }
+                MesgKind::Decrement => {
+                    self.update_snapshot(mesg, logger);
+                    self.state -= 1;
+                    VecDeque::new()
+                }
+            }
+        }
+
+        fn update_snapshot(&mut self, mesg: Message, logger: &mut Vec<String>) {
+            if let Some(snapshot) = &mut self.snapshot {
+                if !self.received.contains(&mesg.sender) {
+                    logger.push(format!("{} saves {mesg} in snapshot.", self.node.name));
+                    snapshot.messages.push(mesg);
+                }
+            }
+        }
+
+        fn random_process(&mut self, logger: &mut Vec<String>) -> Message {
+            let destination = self
+                .node
+                .connections
                 .iter()
-                .filter(|m| m.kind == ChLaMesgKind::Increment)
-                .count() as isize
-                - n.snapshot
+                .choose(&mut rand::rng())
+                .expect("Node has no connections.");
+            let mesg = Message::random(self.name_clone(), destination.other.clone());
+            match mesg.kind {
+                MesgKind::Decrement => {
+                    self.state += 1;
+                    logger.push(format!("{}={} and send {mesg}", self.name(), self.state));
+                }
+                MesgKind::Increment => {
+                    self.state -= 1;
+                    logger.push(format!("{}={} and send {mesg}", self.name(), self.state));
+                }
+                _ => {}
+            };
+            mesg
+        }
+    }
+
+    #[derive(Debug, Display, Default, Clone)]
+    #[displaydoc("<{kind}> {sender}->{destination}")]
+    struct Message {
+        sender: String,
+        destination: String,
+        kind: MesgKind,
+    }
+    impl Mesg for Message {}
+    impl Fifo for Message {}
+
+    impl Message {
+        fn random(sender: String, destination: String) -> Self {
+            Self {
+                sender,
+                destination,
+                kind: [MesgKind::Increment, MesgKind::Decrement]
+                    .choose(&mut rand::rng())
+                    .unwrap()
+                    .to_owned(),
+            }
+        }
+    }
+
+    #[derive(Debug, Display, Default, Clone, PartialEq, Eq)]
+    enum MesgKind {
+        #[default]
+        /// mark
+        Mark,
+        /// increment
+        Increment,
+        /// decrement
+        Decrement,
+    }
+
+    impl NodeGrid {
+        pub fn chandy_lamport(&mut self, logger: &mut Vec<String>) -> Result<()> {
+            self.check_not_empty(logger)?;
+            let mut algorithm: Algorithm<AlgNode, Message> = Algorithm::new(&self.nodes);
+            logger.push(format!(
+                "Started Chandy-Lamport snapshot with {} nodes.",
+                algorithm.nodes.len()
+            ));
+            algorithm.run(logger)
+        }
+    }
+
+    impl Algorithm<AlgNode, Message> {
+        fn run(&mut self, logger: &mut Vec<String>) -> Result<()> {
+            let initiator = self.choose_initiator(logger);
+
+            for i in 0..5 {
+                let node = self.random_node();
+                let mesg = node.random_process(logger);
+                self.add_mesg(mesg);
+            }
+
+            let mut response = self.node_by_name(initiator).create_snapshot(logger);
+            self.add_mesg_iter(&mut response);
+
+            for i in 0..5 {
+                let node = self.random_node();
+                let mesg = node.random_process(logger);
+                self.add_mesg(mesg);
+            }
+
+            while self.has_messages() {
+                let mesg = self.pop_mesg().unwrap();
+                let mut response = self
+                    .node_by_name(mesg.destination.clone())
+                    .handle_message(mesg, logger);
+                if !response.is_empty() {
+                    self.add_mesg_iter(&mut response);
+                    for i in 0..3 {
+                        let node = self.random_node();
+                        let mesg = node.random_process(logger);
+                        self.add_mesg(mesg);
+                    }
+                }
+            }
+
+            verify_snapshot(logger, self);
+
+            Ok(())
+        }
+    }
+
+    fn verify_snapshot(logger: &mut Vec<String>, algorithm: &Algorithm<AlgNode, Message>) {
+        let nodes = &algorithm.nodes;
+        logger.push(String::new());
+        if nodes.iter().all(|n| n.snapshot.is_some()) {
+            logger.push("Snapshot completed.".to_string());
+            let snapshot_sum_of_states = nodes
+                .iter()
+                .fold(0isize, |acc, n| acc + n.snapshot.as_ref().unwrap().state);
+            let snapshot_sum_of_messages = nodes.iter().fold(0isize, |acc, n| {
+                acc + n
+                    .snapshot
                     .as_ref()
                     .unwrap()
                     .messages
                     .iter()
-                    .filter(|m| m.kind == ChLaMesgKind::Decrement)
+                    .filter(|m| m.kind == MesgKind::Increment)
                     .count() as isize
-        });
-        logger.push(format!("Node total: {snapshot_sum_of_states}"));
-        logger.push(format!("Message total: {snapshot_sum_of_messages}"));
-    } else {
-        logger.push("Snapshot did not complete.".to_string());
+                    - n.snapshot
+                        .as_ref()
+                        .unwrap()
+                        .messages
+                        .iter()
+                        .filter(|m| m.kind == MesgKind::Decrement)
+                        .count() as isize
+            });
+            logger.push(format!("Node total: {snapshot_sum_of_states}"));
+            logger.push(format!("Message total: {snapshot_sum_of_messages}"));
+        } else {
+            logger.push("Snapshot did not complete.".to_string());
+        }
+        for node in nodes.iter() {
+            logger.push(format!(
+                "{:?}",
+                node.snapshot
+                    .as_ref()
+                    .map(Snapshot::to_string)
+                    .unwrap_or("None".to_string())
+            ));
+        }
+        logger.push(String::new());
     }
-    // for node in nodes.iter() {
-    //     logger.push(format!("{:?}", node.snapshot));
-    // }
-    logger.push(String::new());
-}
 
-fn log_sent_messages(messages: &VecDeque<ChandyLamportMessage>, logger: &mut Vec<String>) {
-    for mesg in messages.iter() {
-        logger.push(format!("Sent {mesg}."));
+    impl From<&Node> for AlgNode {
+        fn from(node: &Node) -> Self {
+            AlgNode {
+                node: node.clone(),
+                ..Default::default()
+            }
+        }
+    }
+
+    impl NodeLike for AlgNode {
+        fn name(&self) -> &str {
+            &self.node.name
+        }
     }
 }
 
-fn node_by_name(nodes: &mut [ChandyLamportNode], name: String) -> &mut ChandyLamportNode {
-    nodes.iter_mut().find(|n| n.node.name == name).unwrap()
-}
+mod laiyang {
+    use anyhow::{Ok, Result, anyhow};
+    use displaydoc::Display;
+    use rand::seq::{IndexedRandom, IteratorRandom};
+    use std::{
+        collections::{HashMap, VecDeque},
+        default,
+        fmt::format,
+        u8,
+    };
 
-fn choose_initiator(logger: &mut Vec<String>, nodes: &[ChandyLamportNode]) -> String {
-    let initiator = nodes
-        .iter()
-        .choose(&mut rand::rng())
-        .unwrap()
-        .node
-        .name
-        .clone();
-    logger.push(format!("Choose {} as initator.", initiator));
-    initiator
-}
+    use crate::{
+        node::{Node, connection},
+        nodegrid::{NodeGrid, SelectedAlgorithm, snapshots::*},
+    };
 
-// impl ChandyLamportNode {
-//     fn receive(&self, message) ->
-// }
+    #[derive(Debug, Default, Clone)]
+    struct AlgNode {
+        node: Node,
+        state: isize,
+        mesg_received: HashMap<String, u8>,
+        mesg_sent: HashMap<String, u8>,
+        mesg_pre_snapshot: HashMap<String, u8>,
+        snapshot: Option<Snapshot<Message>>,
+        done: bool,
+    }
+    impl AlgNode {
+        fn create_snapshot(&mut self, logger: &mut Vec<String>) -> VecDeque<Message> {
+            self.snapshot = Some(Snapshot::new(self.state));
+            logger.push(format!(
+                "{} took {}",
+                self.name(),
+                self.snapshot.as_ref().unwrap()
+            ));
+
+            let mut outgoing = VecDeque::new();
+            self.send_marks(&mut outgoing);
+            log_sent_messages(&outgoing, logger);
+
+            outgoing
+        }
+
+        fn handle_message(&mut self, mesg: Message, logger: &mut Vec<String>) -> VecDeque<Message> {
+            logger.push(format!("{} received {mesg}", self.name()));
+            let sender = mesg.sender;
+
+            self.mesg_received
+                .entry(sender)
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
+
+            //     let output = match mesg.kind {
+            //         MesgKind::Mark(mesg_count) => {
+            //             let mut output = VecDeque::new();
+            //             if self.snapshot.is_none() {
+            //                 output = self.create_snapshot(logger);
+            //             }
+            //             self.mesg_pre_snapshot.insert(mesg.sender, mesg_count);
+
+            //             logger.push(format!("{} notes it has received {mesg}", self.name(),));
+            //             output
+            //         }
+            //         MesgKind::Increment(post_snapshot) => {
+            //             let mut output = VecDeque::new();
+            //             if !post_snapshot {
+            //                 self.update_snapshot(mesg, logger);
+            //             } else {
+            //                 if self.snapshot.is_none() {
+            //                     logger.push(format!(
+            //                         "{} takes a snapshot, because the received message is true.",
+            //                         self.name()
+            //                     ));
+            //                     output = self.create_snapshot(logger);
+            //                     self.mesg_pre_snapshot.insert(mesg.sender, u8::MAX);
+            //                 }
+            //             }
+            //             self.state += 1;
+            //             output
+            //         }
+            //         MesgKind::Decrement(post_snapshot) => {
+            //             let mut output = VecDeque::new();
+            //             if !post_snapshot {
+            //                 self.update_snapshot(mesg, logger);
+            //             } else {
+            //                 if self.snapshot.is_none() {
+            //                     logger.push(format!(
+            //                         "{} takes a snapshot, because the received message is true.",
+            //                         self.name()
+            //                     ));
+            //                     output = self.create_snapshot(logger);
+            //                     self.mesg_pre_snapshot.insert(mesg.sender, u8::MAX);
+            //                 }
+            //             }
+            //             self.state -= 1;
+            //             output
+            //         }
+            //     };
+            //     if self.snapshot.is_some() && self.mesg_pre_snapshot == self.mesg_received {
+            //         self.done = true;
+            //     }
+            // output
+            todo!()
+        }
+
+        // fn update_snapshot(&mut self, mesg: Message, logger: &mut Vec<String>) {
+        //     if let Some(snapshot) = &mut self.snapshot {
+        //         if !self.received.contains(&mesg.sender) {
+        //             logger.push(format!("{} saves {mesg} in snapshot.", self.node.name));
+        //             snapshot.messages.push(mesg);
+        //         }
+        //     }
+        // }
+
+        fn random_process(&mut self, logger: &mut Vec<String>) -> Message {
+            let mesg = self.send_random();
+            match mesg.kind {
+                MesgKind::Decrement(_) => {
+                    self.state += 1;
+                    logger.push(format!("{}={} and send {mesg}", self.name(), self.state));
+                }
+                MesgKind::Increment(_) => {
+                    self.state -= 1;
+                    logger.push(format!("{}={} and send {mesg}", self.name(), self.state));
+                }
+                _ => {}
+            };
+            mesg
+        }
+
+        fn send_random(&mut self) -> Message {
+            let destination = self
+                .node
+                .connections
+                .iter()
+                .choose(&mut rand::rng())
+                .expect("Node has no connections.");
+            *self.mesg_sent.get_mut(&destination.other).unwrap() += 1;
+            Message::random(
+                self.name_clone(),
+                destination.other.clone(),
+                self.snapshot.is_some(),
+            )
+        }
+
+        fn send_marks(&mut self, outgoing: &mut VecDeque<Message>) {
+            for connection in self.node.connections.iter() {
+                let destination = connection.other.clone();
+                let kind = MesgKind::Mark(*self.mesg_sent.get(&destination).unwrap());
+                let mesg = Message {
+                    sender: self.name_clone(),
+                    destination,
+                    kind,
+                };
+                outgoing.push_back(mesg);
+            }
+        }
+    }
+
+    #[derive(Debug, Display, Default, Clone)]
+    #[displaydoc("<{kind}> {sender}->{destination}")]
+    struct Message {
+        sender: String,
+        destination: String,
+        kind: MesgKind,
+    }
+    impl Mesg for Message {}
+    impl NonFifo for Message {}
+
+    impl Message {
+        fn random(sender: String, destination: String, post_snapshot: bool) -> Self {
+            Self {
+                sender,
+                destination,
+                kind: [
+                    MesgKind::Increment(post_snapshot),
+                    MesgKind::Decrement(post_snapshot),
+                ]
+                .choose(&mut rand::rng())
+                .unwrap()
+                .to_owned(),
+            }
+        }
+    }
+
+    #[derive(Debug, Display, Clone, PartialEq, Eq)]
+    enum MesgKind {
+        /// mark
+        Mark(u8),
+        /// increment
+        Increment(bool),
+        /// decrement
+        Decrement(bool),
+    }
+
+    impl Default for MesgKind {
+        fn default() -> Self {
+            MesgKind::Mark(0)
+        }
+    }
+
+    impl NodeGrid {
+        pub fn lai_yang(&mut self, logger: &mut Vec<String>) -> Result<()> {
+            self.check_not_empty(logger)?;
+            let mut algorithm: Algorithm<AlgNode, Message> = Algorithm::new(&self.nodes);
+            logger.push(format!(
+                "Started Lai-Yang snapshot with {} nodes.",
+                algorithm.nodes.len()
+            ));
+            algorithm.run(logger)
+        }
+    }
+    impl Algorithm<AlgNode, Message> {
+        fn run(&mut self, logger: &mut Vec<String>) -> Result<()> {
+            let initiator = self.choose_initiator(logger);
+
+            for i in 0..5 {
+                let node = self.random_node();
+                let mesg = node.random_process(logger);
+                self.add_mesg(mesg);
+            }
+
+            let mut response = self.node_by_name(initiator).create_snapshot(logger);
+            self.add_mesg_iter(&mut response);
+
+            for i in 0..5 {
+                let node = self.random_node();
+                let mesg = node.random_process(logger);
+                self.add_mesg(mesg);
+            }
+
+            while self.has_messages() {
+                let mesg = self.pop_mesg().unwrap();
+                let mut response = self
+                    .node_by_name(mesg.destination.clone())
+                    .handle_message(mesg, logger);
+                if !response.is_empty() {
+                    self.add_mesg_iter(&mut response);
+                    for i in 0..3 {
+                        let node = self.random_node();
+                        let mesg = node.random_process(logger);
+                        self.add_mesg(mesg);
+                    }
+                }
+            }
+
+            //         verify_snapshot(logger, self);
+
+            Ok(())
+        }
+    }
+
+    impl From<&Node> for AlgNode {
+        fn from(node: &Node) -> Self {
+            let mut mesg_sent = HashMap::new();
+            for destination in node.connections.iter().map(|c| c.other.clone()) {
+                mesg_sent.insert(destination, 0);
+            }
+            AlgNode {
+                node: node.clone(),
+                mesg_sent,
+                ..Default::default()
+            }
+        }
+    }
+
+    impl NodeLike for AlgNode {
+        fn name(&self) -> &str {
+            &self.node.name
+        }
+    }
+
+    fn verify_snapshot(logger: &mut Vec<String>, algorithm: &Algorithm<AlgNode, Message>) {
+        let nodes = &algorithm.nodes;
+        logger.push(String::new());
+        if nodes.iter().all(|n| n.snapshot.is_some()) {
+            logger.push("Snapshot completed.".to_string());
+            let snapshot_sum_of_states = nodes
+                .iter()
+                .fold(0isize, |acc, n| acc + n.snapshot.as_ref().unwrap().state);
+            let snapshot_sum_of_messages = nodes.iter().fold(0isize, |acc, n| {
+                acc + n
+                    .snapshot
+                    .as_ref()
+                    .unwrap()
+                    .messages
+                    .iter()
+                    .filter(|m| {
+                        m.kind == MesgKind::Increment(false) || m.kind == MesgKind::Increment(true)
+                    })
+                    .count() as isize
+                    - n.snapshot
+                        .as_ref()
+                        .unwrap()
+                        .messages
+                        .iter()
+                        .filter(|m| {
+                            m.kind == MesgKind::Decrement(false)
+                                || m.kind == MesgKind::Decrement(true)
+                        })
+                        .count() as isize
+            });
+            logger.push(format!("Node total: {snapshot_sum_of_states}"));
+            logger.push(format!("Message total: {snapshot_sum_of_messages}"));
+        } else {
+            logger.push("Snapshot did not complete.".to_string());
+        }
+        for node in nodes.iter() {
+            logger.push(format!(
+                "{:?}",
+                node.snapshot
+                    .as_ref()
+                    .map(Snapshot::to_string)
+                    .unwrap_or("None".to_string())
+            ));
+        }
+        logger.push(String::new());
+    }
+}

@@ -1,7 +1,7 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 
 use anyhow::{Context, Result, anyhow};
-use nodegrid::{Algorithm, NodeGrid, NodeGridDisplay};
+use nodegrid::{NodeGrid, NodeGridDisplay, SelectedAlgorithm};
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
@@ -302,15 +302,26 @@ impl App<'_> {
                 if self.sidebar_state.is_shown()
                     & (self.sidebar.shown_content == SidebarContent::Selector) =>
             {
-                let algorithm = Algorithm::from_repr(0)
-                    .ok_or_else(|| anyhow!("Parsing scroll state {} to Algorithm failed.", 0))?;
-                self.sidebar.log();
-                self.node_display
-                    .grid
-                    .run_algorithm(algorithm, &mut self.sidebar.log)?;
+                self.select_algorithm()?
+            }
+            KeyCode::Delete
+                if self.sidebar_state.is_shown()
+                    & key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.sidebar.log.clear();
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    fn select_algorithm(&mut self) -> Result<(), anyhow::Error> {
+        let algorithm = SelectedAlgorithm::from_repr(self.sidebar.selector_scroll_state)
+            .ok_or_else(|| anyhow!("Parsing scroll state {} to Algorithm failed.", 0))?;
+        self.sidebar.log();
+        self.node_display
+            .grid
+            .run_algorithm(algorithm, &mut self.sidebar.log)?;
         Ok(())
     }
 
@@ -762,7 +773,7 @@ impl Sidebar<'_> {
     }
 
     fn render_selector(&mut self, area: Rect, buf: &mut Buffer) {
-        let algorithms = Algorithm::iter();
+        let algorithms = SelectedAlgorithm::iter();
         let list = List::new(algorithms)
             .block(self.block.clone())
             .highlight_style(Style::default().reversed())
@@ -788,7 +799,7 @@ impl<'a> Sidebar<'a> {
 
     fn create_wrapped_lines(&mut self, max_width: u16) -> Vec<Line<'a>> {
         let mut output = vec![];
-        for line in self.log.iter() {
+        for line in self.log.iter().flat_map(|s| s.split("\\n")) {
             let mut next_line = String::new();
             let mut length = 0;
             for grapheme in line.graphemes(true) {
