@@ -306,7 +306,7 @@ impl App<'_> {
             }
             KeyCode::Delete
                 if self.sidebar_state.is_shown()
-                    & key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                    & key_event.modifiers.contains(KeyModifiers::ALT) =>
             {
                 self.sidebar.log.clear();
             }

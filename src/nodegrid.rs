@@ -20,12 +20,13 @@ use crate::{
     },
 };
 
-mod snapshots;
+mod algorithms;
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, EnumIter, FromRepr)]
 pub enum SelectedAlgorithm {
     ChandyLamport,
     LaiYang,
+    ChangRoberts,
 }
 
 impl From<SelectedAlgorithm> for ListItem<'_> {
