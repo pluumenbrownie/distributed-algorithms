@@ -177,7 +177,7 @@ impl NodeGrid {
             0 => Err(anyhow!("Tried to connect with empty floating_nodes."))?,
             _ => {
                 for node in self.floating_nodes.iter() {
-                    let other_connection = Connection::new(node.name.clone(), connection.weight);
+                    let other_connection = Connection::new(node.name.clone(), *connection.weight);
                     for node in self.nodes.iter_mut().filter(|n| n.name == connection.other) {
                         node.add_connection(&other_connection);
                     }

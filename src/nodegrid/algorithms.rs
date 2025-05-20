@@ -106,6 +106,7 @@ where
     N: NodeLike,
     M: Fifo,
 {
+    /// Add a FIFO message to the back of the queue.
     fn add_mesg(&mut self, mesg: M) {
         self.messages.push_back(mesg);
     }
@@ -123,7 +124,7 @@ where
     N: NodeLike,
     M: NonFifo,
 {
-    /// Add message in a random index of the message queue.
+    /// Add a message in a random index of the message queue.
     fn add_mesg(&mut self, mesg: M) {
         if self.has_messages() {
             let index = random_range(0..self.messages.len());

@@ -1,3 +1,4 @@
+use ordered_float::OrderedFloat;
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, widgets::Widget};
 use serde::{Deserialize, Serialize};
 
@@ -87,15 +88,18 @@ impl ConnectionSprite {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Connection {
     pub other: String,
-    pub weight: f64,
+    pub weight: OrderedFloat<f64>,
 }
 
 impl Connection {
     pub fn new(other: String, weight: f64) -> Self {
-        Self { other, weight }
+        Self {
+            other,
+            weight: OrderedFloat(weight),
+        }
     }
 
     pub fn directed_sprite(&self, start: &Location, end: &Location) -> ConnectionSprite {
